@@ -25,8 +25,8 @@ $srcCore   = $root . '/core/components/pdfuploader/';
 $srcAssets = $root . '/assets/components/pdfuploader/';
 
 // install targets
-$tgtCore   = MODX_CORE_PATH   . 'components/pdfuploader/';
-$tgtAssets = MODX_ASSETS_PATH . 'components/pdfuploader/';
+$tgtCore   = MODX_CORE_PATH   . 'components/';
+$tgtAssets = MODX_ASSETS_PATH . 'components/';
 
 $builder = new modPackageBuilder($modx);
 $builder->createPackage($pkgNameLower, $pkgVersion, $pkgRelease);
@@ -44,6 +44,15 @@ $vehicle = $builder->createVehicle($namespace, [
 ]);
 
 // Put component files
+if (!is_file($srcCore . 'index.class.php')) {
+    echo "ERROR: srcCore wrong: {$srcCore} (index.class.php not found)\n";
+    exit(1);
+}
+if (!is_file($srcAssets . 'mgr-panel.html')) {
+    echo "ERROR: srcAssets wrong: {$srcAssets} (mgr-panel.html not found)\n";
+    exit(1);
+}
+
 $vehicle->resolve('file', [
     'source' => $srcCore,
     'target' => "return '{$tgtCore}';",
