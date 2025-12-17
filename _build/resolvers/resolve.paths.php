@@ -1,8 +1,9 @@
 <?php
 if (!isset($object) || !($object instanceof xPDOTransport)) return true;
+$modx = $object->xpdo;
 
-$action = $options[xPDOTransport::PACKAGE_ACTION] ?? null;
-if ($action !== xPDOTransport::ACTION_INSTALL && $action !== xPDOTransport::ACTION_UPGRADE) return true;
+$act = $options[xPDOTransport::PACKAGE_ACTION] ?? null;
+if ($act !== xPDOTransport::ACTION_INSTALL && $act !== xPDOTransport::ACTION_UPGRADE) return true;
 
 $basePath = rtrim(MODX_BASE_PATH, '/') . '/';
 
@@ -16,6 +17,23 @@ $toRel = function(string $v): string {
     return trim($v, "/ \t\n\r\0\x0B");
 };
 
+$ensure = function(string $key): modSystemSetting {
+    global $modx;
+    $s = $modx->getObject('modSystemSetting', ['key' => $key]);
+    if (!$s) {
+        $s = $modx->newObject('modSystemSetting');
+        $s->fromArray([
+            'key' => $key,
+            'namespace' => 'pdfuploader',
+            'area' => 'Paths',
+            'xtype' => 'textfield',
+            'value' => '',
+        ], '', true, true);
+        $s->save();
+    }
+    return $s;
+};
+
 $docsUrl   = (string)$modx->getOption('pdfuploader.docs_base_url', null, '');
 $thumbsUrl = (string)$modx->getOption('pdfuploader.thumbs_base_url', null, '');
 
@@ -23,16 +41,15 @@ $docsRel   = $toRel($docsUrl);
 $thumbsRel = $toRel($thumbsUrl);
 
 if ($docsRel !== '') {
-    if ($s = $modx->getObject('modSystemSetting', ['key' => 'pdfuploader.docs_base_path'])) {
-        $s->set('value', $basePath . $docsRel . '/');
-        $s->save();
-    }
+    $s = $ensure('pdfuploader.docs_base_path');
+    $s->set('value', $basePath . $docsRel . '/');
+    $s->save();
 }
+
 if ($thumbsRel !== '') {
-    if ($s = $modx->getObject('modSystemSetting', ['key' => 'pdfuploader.thumbs_base_path'])) {
-        $s->set('value', $basePath . $thumbsRel . '/');
-        $s->save();
-    }
+    $s = $ensure('pdfuploader.thumbs_base_path');
+    $s->set('value', $basePath . $thumbsRel . '/');
+    $s->save();
 }
 
 return true;

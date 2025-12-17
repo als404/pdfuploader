@@ -62,11 +62,6 @@ $vehicle->resolve('file', [
     'target' => "return '{$tgtAssets}';",
 ]);
 
-// Resolvers (paths + registry table + cache)
-$vehicle->resolve('php', ['source' => $resolvers . 'resolve.paths.php']);
-$vehicle->resolve('php', ['source' => $resolvers . 'resolve.tables.php']);
-$vehicle->resolve('php', ['source' => $resolvers . 'resolve.clearcache.php']);
-
 $builder->putVehicle($vehicle);
 
 /** ---------------------------------
@@ -93,6 +88,12 @@ $vehicle = $builder->createVehicle($menu, [
     xPDOTransport::PRESERVE_KEYS => true,
     xPDOTransport::UPDATE_OBJECT => true,
 ]);
+
+// Resolvers MUST run after settings exist
+$vehicle->resolve('php', ['source' => $resolvers . 'resolve.paths.php']);
+$vehicle->resolve('php', ['source' => $resolvers . 'resolve.tables.php']);
+$vehicle->resolve('php', ['source' => $resolvers . 'resolve.clearcache.php']);
+
 $builder->putVehicle($vehicle);
 
 // Package attributes (optional)
