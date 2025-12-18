@@ -376,35 +376,28 @@ if ($action === 'ping') { json_ok(['success'=>true,'pong'=>true,'user'=>$modx->u
 /* бренды */
 if ($action === 'list_vendors') {
 
-    // miniShop2 может отсутствовать на другом сайте: не падаем, а объясняем.
-    if (!class_exists('msVendor')) {
-        json_ok([
-            'success' => false,
-            'message' => 'miniShop2 model is not available (msVendor class missing). Check that miniShop2 is installed.',
+    $q = $modx->newQuery('msVendor');
+    $q->select($modx->getSelectColumns('msVendor', 'msVendor', '', ['id','name']));
+    $q->sortby($modx->escape('name'), 'ASC');
+
+    if (!$q->prepare() || !$q->stmt->execute()) {
+        json_error('DB error in list_vendors', [
+            'sql' => $q->toSQL(),
+            'error' => $q->stmt ? $q->stmt->errorInfo() : null,
         ]);
     }
 
-    $c = $modx->newQuery('msVendor');
-    if (!$c) {
-        json_ok(['success' => false, 'message' => 'Cannot create query for msVendor']);
-    }
-
-    $c->select(['id','name']);
-    $c->sortby('name','ASC');
-
     $vendors = [];
-
-    if ($c->prepare() && $c->stmt->execute()) {
-        while ($r = $c->stmt->fetch(PDO::FETCH_ASSOC)) {
-            $vendors[] = ['id' => (int)$r['id'], 'name' => (string)$r['name']];
-        }
-        json_ok(['success' => true, 'vendors' => $vendors]);
+    while ($row = $q->stmt->fetch(PDO::FETCH_ASSOC)) {
+        $vendors[] = [
+            'id'   => (int)$row['id'],
+            'name' => (string)$row['name'],
+        ];
     }
 
-    // Если prepare/execute не прошло - возвращаем ошибку, а не 500
-    $errInfo = $c->stmt ? $c->stmt->errorInfo() : null;
-    json_ok(['success' => false, 'message' => 'DB error in list_vendors', 'db_error' => $errInfo]);
+    json_ok(['success' => true, 'vendors' => $vendors]);
 }
+
 
 
 /* папки превью */
