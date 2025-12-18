@@ -184,34 +184,6 @@ register_shutdown_function(function() use ($modx) {
 // чтобы msVendor/msProductData были доступны
 // $modx->addPackage('minishop2', MODX_CORE_PATH . 'components/minishop2/model/');
 // ---------------- miniShop2 xPDO bootstrap ----------------
-$ms2CorePath = (string)$modx->getOption(
-    'minishop2.core_path',
-    null,
-    MODX_CORE_PATH . 'components/minishop2/'
-);
-
-$ms2ModelPath = rtrim($ms2CorePath, '/') . '/model/minishop2/';
-
-// 1. Регистрируем пакет в xPDO
-$modx->addPackage('minishop2', $ms2ModelPath, '');
-
-// 2. Принудительно подгружаем класс (ВАЖНО)
-$modx->loadClass('msVendor', $ms2ModelPath . 'msvendor.class.php', true, true);
-
-// 3. Контроль
-if (!class_exists('msVendor', false)) {
-    json_error(
-        'miniShop2 model not loaded: msVendor class missing',
-        [
-            'minishop2.core_path' => $ms2CorePath,
-            'model_path'          => $ms2ModelPath,
-            'files'               => @scandir($ms2ModelPath),
-        ]
-    );
-}
-// ----------------------------------------------------------
-
-
 
 /* only manager users */
 if (!$modx->user || !$modx->user->isAuthenticated('mgr')) {
