@@ -12,8 +12,8 @@ $modx = new modX();
 $modx->initialize('mgr');
 
 $pkgNameLower = 'pdfuploader';
-$pkgVersion   = '1.0.0';
-$pkgRelease   = 'pl';
+$pkgVersion   = '1.0.1';
+$pkgRelease   = 'pl2';
 
 $root = dirname(__DIR__);            // .../pdfuploader
 $build = __DIR__;
