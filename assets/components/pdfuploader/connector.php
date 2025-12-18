@@ -31,7 +31,6 @@ if (!function_exists('json_error')) {
     }
 }
 
-
 // --- miniShop2 xPDO bootstrap (API-safe) ---
 $ms2CorePath = (string)$modx->getOption(
     'minishop2.core_path',
@@ -215,7 +214,7 @@ set_error_handler(function($no,$str,$file,$line){
 
 
 /* ===== HELPERS (safe) ===== */
-function json_ok(array $a){ echo json_encode($a, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
+// function json_ok(array $a){ echo json_encode($a, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
 
 function absUrl(modX $modx, string $p): string {
     if ($p === '' || preg_match('~^https?://~i', $p)) return $p;
