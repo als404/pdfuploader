@@ -1,15 +1,23 @@
 <?php
-/** @var xPDOTransport $object */
+/** @var xPDOTransport $transport */
 /** @var array $options */
 
-if (!isset($object) || !($object instanceof xPDOTransport)) return true;
-$modx = $object->xpdo;
+if (!isset($transport) || !($transport instanceof xPDOTransport)) {
+    return true;
+}
+
+$modx = $transport->xpdo;
 
 $act = $options[xPDOTransport::PACKAGE_ACTION] ?? null;
-if ($act !== xPDOTransport::ACTION_INSTALL && $act !== xPDOTransport::ACTION_UPGRADE) return true;
+if ($act !== xPDOTransport::ACTION_INSTALL && $act !== xPDOTransport::ACTION_UPGRADE) {
+    return true;
+}
 
 $useRegistry = (int)$modx->getOption('pdfuploader.use_registry', null, 1);
-if (!$useRegistry) return true;
+if (!$useRegistry) {
+    $modx->log(modX::LOG_LEVEL_ERROR, '[pdfuploader] resolve.tables skipped: use_registry=0');
+    return true;
+}
 
 $tableName = ($modx->getOption('table_prefix') ?? '') .
     $modx->getOption('pdfuploader.registry_table', null, 'pdfuploader_registry');
@@ -35,5 +43,6 @@ $sql = "CREATE TABLE IF NOT EXISTS `{$tableName}` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;";
 
 $modx->exec($sql);
-$modx->log(modX::LOG_LEVEL_INFO, "✔ Таблица {$tableName} проверена/создана.");
+$modx->log(modX::LOG_LEVEL_ERROR, "✔ [pdfuploader] resolve.tables executed, table={$tableName}");
+
 return true;

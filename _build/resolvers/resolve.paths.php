@@ -1,12 +1,17 @@
 <?php
-/** @var xPDOTransport $object */
+/** @var xPDOTransport $transport */
 /** @var array $options */
 
-if (!isset($object) || !($object instanceof xPDOTransport)) return true;
-$modx = $object->xpdo;
+if (!isset($transport) || !($transport instanceof xPDOTransport)) {
+    return true;
+}
+
+$modx = $transport->xpdo;
 
 $act = $options[xPDOTransport::PACKAGE_ACTION] ?? null;
-if ($act !== xPDOTransport::ACTION_INSTALL && $act !== xPDOTransport::ACTION_UPGRADE) return true;
+if ($act !== xPDOTransport::ACTION_INSTALL && $act !== xPDOTransport::ACTION_UPGRADE) {
+    return true;
+}
 
 $basePath = rtrim(MODX_BASE_PATH, '/') . '/';
 
@@ -36,7 +41,7 @@ $ensure = function(string $key) use ($modx): modSystemSetting {
     return $s;
 };
 
-// НЕ трогаем *_base_url, только читаем
+// Не трогаем *_base_url, только читаем
 $docsRel   = $toRel((string)$modx->getOption('pdfuploader.docs_base_url', null, ''));
 $thumbsRel = $toRel((string)$modx->getOption('pdfuploader.thumbs_base_url', null, ''));
 
@@ -45,11 +50,14 @@ if ($docsRel !== '') {
     $s->set('value', $basePath . $docsRel . '/');
     $s->save();
 }
+
 if ($thumbsRel !== '') {
     $s = $ensure('pdfuploader.thumbs_base_path');
     $s->set('value', $basePath . $thumbsRel . '/');
     $s->save();
 }
 
-$modx->log(modX::LOG_LEVEL_INFO, '[pdfuploader] resolve.paths: ok');
+// Важно: LOG_LEVEL_ERROR почти гарантированно пишется в файл
+$modx->log(modX::LOG_LEVEL_ERROR, '[pdfuploader] resolve.paths executed');
+
 return true;

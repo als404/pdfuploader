@@ -13,7 +13,7 @@ $modx->initialize('mgr');
 
 $pkgNameLower = 'pdfuploader';
 $pkgVersion   = '1.0.1';
-$pkgRelease   = 'pl3';
+$pkgRelease   = 'pl4';
 
 $root = dirname(__DIR__);            // .../pdfuploader
 $build = __DIR__;
