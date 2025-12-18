@@ -13,7 +13,8 @@ if ($act !== xPDOTransport::ACTION_INSTALL && $act !== xPDOTransport::ACTION_UPG
     return true;
 }
 
-$basePath = rtrim(MODX_BASE_PATH, '/') . '/';
+// Надежнее, чем MODX_BASE_PATH в resolver-контексте
+$basePath = rtrim((string)$modx->getOption('base_path'), '/') . '/';
 
 $toRel = function(string $v): string {
     $v = trim($v);
@@ -25,7 +26,15 @@ $toRel = function(string $v): string {
     return trim($v, "/ \t\n\r\0\x0B");
 };
 
-$ensure = function(string $key) use ($modx): modSystemSetting {
+$getSettingValue = function(string $key, string $default = '') use ($modx): string {
+    $s = $modx->getObject('modSystemSetting', ['key' => $key]);
+    if ($s) {
+        return (string)$s->get('value');
+    }
+    return $default;
+};
+
+$ensureSetting = function(string $key, string $value = '') use ($modx): modSystemSetting {
     $s = $modx->getObject('modSystemSetting', ['key' => $key]);
     if (!$s) {
         $s = $modx->newObject('modSystemSetting');
@@ -34,30 +43,36 @@ $ensure = function(string $key) use ($modx): modSystemSetting {
             'namespace' => 'pdfuploader',
             'area' => 'Paths',
             'xtype' => 'textfield',
-            'value' => '',
+            'value' => $value,
         ], '', true, true);
         $s->save();
+        return $s;
     }
     return $s;
 };
 
-// Не трогаем *_base_url, только читаем
-$docsRel   = $toRel((string)$modx->getOption('pdfuploader.docs_base_url', null, ''));
-$thumbsRel = $toRel((string)$modx->getOption('pdfuploader.thumbs_base_url', null, ''));
+// Читаем URL НАПРЯМУЮ из БД (не через getOption)
+$docsUrl   = $getSettingValue('pdfuploader.docs_base_url',   'assets/images/docs/');
+$thumbsUrl = $getSettingValue('pdfuploader.thumbs_base_url', 'assets/images/thumbs/');
+
+$docsRel   = $toRel($docsUrl);
+$thumbsRel = $toRel($thumbsUrl);
+
+// Гарантируем, что keys существуют
+$docsPathS   = $ensureSetting('pdfuploader.docs_base_path', '');
+$thumbsPathS = $ensureSetting('pdfuploader.thumbs_base_path', '');
 
 if ($docsRel !== '') {
-    $s = $ensure('pdfuploader.docs_base_path');
-    $s->set('value', $basePath . $docsRel . '/');
-    $s->save();
+    $docsPathS->set('value', $basePath . $docsRel . '/');
+    $docsPathS->save();
 }
 
 if ($thumbsRel !== '') {
-    $s = $ensure('pdfuploader.thumbs_base_path');
-    $s->set('value', $basePath . $thumbsRel . '/');
-    $s->save();
+    $thumbsPathS->set('value', $basePath . $thumbsRel . '/');
+    $thumbsPathS->save();
 }
 
-// Важно: LOG_LEVEL_ERROR почти гарантированно пишется в файл
-$modx->log(modX::LOG_LEVEL_ERROR, '[pdfuploader] resolve.paths executed');
+// Диагностический лог (временно, чтобы 100% увидеть значения)
+$modx->log(modX::LOG_LEVEL_ERROR, '[pdfuploader] resolve.paths executed: base_path=' . $basePath . ' docs_url=' . $docsUrl . ' thumbs_url=' . $thumbsUrl);
 
 return true;
