@@ -31,6 +31,31 @@ if (!function_exists('json_error')) {
     }
 }
 
+
+// ---------------- miniShop2 xPDO bootstrap ----------------
+$ms2CorePath = (string)$modx->getOption(
+    'minishop2.core_path',
+    null,
+    $modx->getOption('core_path') . 'components/minishop2/'
+);
+
+$ms2ModelPath = rtrim($ms2CorePath, '/') . '/model/minishop2/';
+
+// 1. Регистрируем модель ЯВНО
+$modx->addPackage('minishop2', $ms2ModelPath);
+
+// 2. Поднимаем сервис (не обязательно, но полезно)
+$modx->getService('miniShop2', 'miniShop2', $ms2ModelPath);
+
+// 3. Жёсткая проверка
+if (!class_exists('msVendor', false)) {
+    json_error('miniShop2 model not loaded: msVendor class missing', [
+        'minishop2.core_path' => $ms2CorePath,
+        'model_path'          => $ms2ModelPath,
+    ]);
+}
+// ----------------------------------------------------------
+
 /** pdfuploader settings (paths, tv, registry table) */
 // 1) читаем пути строго из системных настроек (без дефолтов)
 $docsBasePath   = trim((string)$modx->getOption('pdfuploader.docs_base_path'),   " \t\n\r\0\x0B/");
@@ -158,31 +183,34 @@ register_shutdown_function(function() use ($modx) {
 
 // чтобы msVendor/msProductData были доступны
 // $modx->addPackage('minishop2', MODX_CORE_PATH . 'components/minishop2/model/');
-// --- miniShop2 model bootstrap (universal) ---
+// ---------------- miniShop2 xPDO bootstrap ----------------
 $ms2CorePath = (string)$modx->getOption(
     'minishop2.core_path',
     null,
     MODX_CORE_PATH . 'components/minishop2/'
 );
 
-$modelPath = rtrim($ms2CorePath, '/') . '/model/minishop2/';
+$ms2ModelPath = rtrim($ms2CorePath, '/') . '/model/minishop2/';
 
-// Prefer service init (it also ensures model availability)
-$modx->getService('miniShop2', 'miniShop2', $modelPath);
+// 1. Регистрируем пакет в xPDO
+$modx->addPackage('minishop2', $ms2ModelPath, '');
 
-// Ensure classes are available for xPDO
-$modx->addPackage('minishop2', $modelPath);
+// 2. Принудительно подгружаем класс (ВАЖНО)
+$modx->loadClass('msVendor', $ms2ModelPath . 'msvendor.class.php', true, true);
 
-if (!class_exists('msVendor')) {
-    json_ok([
-        'success' => false,
-        'message' => 'miniShop2 model is not available (msVendor class missing). Check minishop2.core_path and model path.',
-        'debug' => [
+// 3. Контроль
+if (!class_exists('msVendor', false)) {
+    json_error(
+        'miniShop2 model not loaded: msVendor class missing',
+        [
             'minishop2.core_path' => $ms2CorePath,
-            'modelPath' => $modelPath,
-        ],
-    ]);
+            'model_path'          => $ms2ModelPath,
+            'files'               => @scandir($ms2ModelPath),
+        ]
+    );
 }
+// ----------------------------------------------------------
+
 
 
 /* only manager users */
