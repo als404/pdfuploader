@@ -1,4 +1,7 @@
 <?php
+/** @var xPDOTransport $object */
+/** @var array $options */
+
 if (!isset($object) || !($object instanceof xPDOTransport)) return true;
 $modx = $object->xpdo;
 
@@ -33,5 +36,4 @@ $sql = "CREATE TABLE IF NOT EXISTS `{$tableName}` (
 
 $modx->exec($sql);
 $modx->log(modX::LOG_LEVEL_INFO, "✔ Таблица {$tableName} проверена/создана.");
-
 return true;

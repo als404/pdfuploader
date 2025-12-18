@@ -1,4 +1,7 @@
 <?php
+/** @var xPDOTransport $object */
+/** @var array $options */
+
 if (!isset($object) || !($object instanceof xPDOTransport)) return true;
 $modx = $object->xpdo;
 
@@ -17,8 +20,7 @@ $toRel = function(string $v): string {
     return trim($v, "/ \t\n\r\0\x0B");
 };
 
-$ensure = function(string $key): modSystemSetting {
-    global $modx;
+$ensure = function(string $key) use ($modx): modSystemSetting {
     $s = $modx->getObject('modSystemSetting', ['key' => $key]);
     if (!$s) {
         $s = $modx->newObject('modSystemSetting');
@@ -34,22 +36,20 @@ $ensure = function(string $key): modSystemSetting {
     return $s;
 };
 
-$docsUrl   = (string)$modx->getOption('pdfuploader.docs_base_url', null, '');
-$thumbsUrl = (string)$modx->getOption('pdfuploader.thumbs_base_url', null, '');
-
-$docsRel   = $toRel($docsUrl);
-$thumbsRel = $toRel($thumbsUrl);
+// НЕ трогаем *_base_url, только читаем
+$docsRel   = $toRel((string)$modx->getOption('pdfuploader.docs_base_url', null, ''));
+$thumbsRel = $toRel((string)$modx->getOption('pdfuploader.thumbs_base_url', null, ''));
 
 if ($docsRel !== '') {
     $s = $ensure('pdfuploader.docs_base_path');
     $s->set('value', $basePath . $docsRel . '/');
     $s->save();
 }
-
 if ($thumbsRel !== '') {
     $s = $ensure('pdfuploader.thumbs_base_path');
     $s->set('value', $basePath . $thumbsRel . '/');
     $s->save();
 }
 
+$modx->log(modX::LOG_LEVEL_INFO, '[pdfuploader] resolve.paths: ok');
 return true;
