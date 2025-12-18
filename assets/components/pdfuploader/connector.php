@@ -32,26 +32,27 @@ if (!function_exists('json_error')) {
 }
 
 
-// ---------------- miniShop2 xPDO bootstrap ----------------
+// --- miniShop2 xPDO bootstrap (API-safe) ---
 $ms2CorePath = (string)$modx->getOption(
     'minishop2.core_path',
     null,
-    $modx->getOption('core_path') . 'components/minishop2/'
+    MODX_CORE_PATH . 'components/minishop2/'
 );
 
 $ms2ModelPath = rtrim($ms2CorePath, '/') . '/model/minishop2/';
 
-// 1. Регистрируем модель ЯВНО
+// register xPDO package (correct model path)
 $modx->addPackage('minishop2', $ms2ModelPath);
 
-// 2. Поднимаем сервис (не обязательно, но полезно)
-$modx->getService('miniShop2', 'miniShop2', $ms2ModelPath);
+// force-load msVendor class (no reliance on autoload)
+$modx->loadClass('msVendor', $ms2ModelPath . 'msvendor.class.php', true, true);
 
-// 3. Жёсткая проверка
 if (!class_exists('msVendor', false)) {
     json_error('miniShop2 model not loaded: msVendor class missing', [
         'minishop2.core_path' => $ms2CorePath,
         'model_path'          => $ms2ModelPath,
+        'msvendor_file'       => $ms2ModelPath . 'msvendor.class.php',
+        'file_exists'         => is_file($ms2ModelPath . 'msvendor.class.php'),
     ]);
 }
 // ----------------------------------------------------------
