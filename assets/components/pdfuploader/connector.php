@@ -239,7 +239,7 @@ function makeJpgPreview(string $pdfPath, string $jpgPath, array &$diag = []): bo
 /* -------------------------- miniShop2 SQL helpers ----------------------- */
 
 function ms2_table(modX $modx, string $name): string {
-    $tp = $modx->getOption('table_prefix') ?: 'modx_';
+    $tp = (string)$modx->getOption('table_prefix', null, 'modx_');
     // miniShop2 tables are ms2_*
     return $tp . 'ms2_' . $name;
 }
@@ -344,7 +344,7 @@ if ($action === 'search_all') {
         json_ok(['success' => true, 'items' => []]);
     }
 
-    $tp = $modx->getOption('table_prefix') ?: 'modx_';
+    $tp = (string)$modx->getOption('table_prefix', null, 'modx_');
     $tContent = $tp . 'site_content';
     $tProd    = ms2_table($modx, 'products');
     $tData    = ms2_table($modx, 'product_data');
