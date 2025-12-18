@@ -376,19 +376,20 @@ if ($action === 'ping') { json_ok(['success'=>true,'pong'=>true,'user'=>$modx->u
 /* бренды */
 if ($action === 'list_vendors') {
 
-    $q = $modx->newQuery('msVendor');
-    $q->select($modx->getSelectColumns('msVendor', 'msVendor', '', ['id','name']));
-    $q->sortby($modx->escape('name'), 'ASC');
+    $table = ($modx->getOption('table_prefix') ?? 'modx_') . 'ms2_vendors';
 
-    if (!$q->prepare() || !$q->stmt->execute()) {
+    $sql = "SELECT `id`, `name` FROM `{$table}` ORDER BY `name` ASC";
+    $stmt = $modx->prepare($sql);
+
+    if (!$stmt || !$stmt->execute()) {
         json_error('DB error in list_vendors', [
-            'sql' => $q->toSQL(),
-            'error' => $q->stmt ? $q->stmt->errorInfo() : null,
+            'sql' => $sql,
+            'error' => $stmt ? $stmt->errorInfo() : null,
         ]);
     }
 
     $vendors = [];
-    while ($row = $q->stmt->fetch(PDO::FETCH_ASSOC)) {
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $vendors[] = [
             'id'   => (int)$row['id'],
             'name' => (string)$row['name'],
@@ -397,8 +398,6 @@ if ($action === 'list_vendors') {
 
     json_ok(['success' => true, 'vendors' => $vendors]);
 }
-
-
 
 /* папки превью */
 if ($action === 'list_folders') {
