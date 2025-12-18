@@ -41,10 +41,10 @@ $ms2CorePath = (string)$modx->getOption(
 $ms2ModelPath = rtrim($ms2CorePath, '/') . '/model/minishop2/';
 
 // register xPDO package (correct model path)
-$modx->addPackage('minishop2', $ms2ModelPath);
+$modx->addPackage('minishop2', $ms2ModelPath, 'ms2_');
 
 // force-load msVendor class (no reliance on autoload)
-$modx->loadClass('msVendor', $ms2ModelPath . 'msvendor.class.php', true, true);
+$modx->loadClass('msVendor', $ms2ModelPath, true, true);
 
 if (!class_exists('msVendor', false)) {
     json_error('miniShop2 model not loaded: msVendor class missing', [
@@ -180,11 +180,6 @@ register_shutdown_function(function() use ($modx) {
     ], JSON_UNESCAPED_UNICODE);
 });
 
-
-// чтобы msVendor/msProductData были доступны
-// $modx->addPackage('minishop2', MODX_CORE_PATH . 'components/minishop2/model/');
-// ---------------- miniShop2 xPDO bootstrap ----------------
-
 /* only manager users */
 if (!$modx->user || !$modx->user->isAuthenticated('mgr')) {
     header('Content-Type: application/json; charset=utf-8');
@@ -208,13 +203,6 @@ set_error_handler(function($no,$str,$file,$line){
     echo json_encode(['success'=>false,'message'=>'PHP error','error'=>"$str @ $file:$line"], JSON_UNESCAPED_UNICODE);
     exit;
 });
-
-/* miniShop2 models */
-// $modx->addPackage('minishop2', MODX_CORE_PATH.'components/minishop2/model/', $modx->config['table_prefix'] ?? '');
-
-
-/* ===== HELPERS (safe) ===== */
-// function json_ok(array $a){ echo json_encode($a, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
 
 function absUrl(modX $modx, string $p): string {
     if ($p === '' || preg_match('~^https?://~i', $p)) return $p;
