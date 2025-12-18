@@ -157,7 +157,33 @@ register_shutdown_function(function() use ($modx) {
 
 
 // чтобы msVendor/msProductData были доступны
-$modx->addPackage('minishop2', MODX_CORE_PATH . 'components/minishop2/model/');
+// $modx->addPackage('minishop2', MODX_CORE_PATH . 'components/minishop2/model/');
+// --- miniShop2 model bootstrap (universal) ---
+$ms2CorePath = (string)$modx->getOption(
+    'minishop2.core_path',
+    null,
+    MODX_CORE_PATH . 'components/minishop2/'
+);
+
+$modelPath = rtrim($ms2CorePath, '/') . '/model/minishop2/';
+
+// Prefer service init (it also ensures model availability)
+$modx->getService('miniShop2', 'miniShop2', $modelPath);
+
+// Ensure classes are available for xPDO
+$modx->addPackage('minishop2', $modelPath);
+
+if (!class_exists('msVendor')) {
+    json_ok([
+        'success' => false,
+        'message' => 'miniShop2 model is not available (msVendor class missing). Check minishop2.core_path and model path.',
+        'debug' => [
+            'minishop2.core_path' => $ms2CorePath,
+            'modelPath' => $modelPath,
+        ],
+    ]);
+}
+
 
 /* only manager users */
 if (!$modx->user || !$modx->user->isAuthenticated('mgr')) {
@@ -184,7 +210,8 @@ set_error_handler(function($no,$str,$file,$line){
 });
 
 /* miniShop2 models */
-$modx->addPackage('minishop2', MODX_CORE_PATH.'components/minishop2/model/', $modx->config['table_prefix'] ?? '');
+// $modx->addPackage('minishop2', MODX_CORE_PATH.'components/minishop2/model/', $modx->config['table_prefix'] ?? '');
+
 
 /* ===== HELPERS (safe) ===== */
 function json_ok(array $a){ echo json_encode($a, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
@@ -358,7 +385,6 @@ $action = isset($_REQUEST['action']) ? (string)$_REQUEST['action'] : '';
 /* ping */
 if ($action === 'ping') { json_ok(['success'=>true,'pong'=>true,'user'=>$modx->user->get('username')]); }
 
-/* бренды */
 /* бренды */
 if ($action === 'list_vendors') {
 
