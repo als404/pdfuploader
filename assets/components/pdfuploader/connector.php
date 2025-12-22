@@ -232,60 +232,131 @@ if ($action === 'list_vendors') {
     json_ok(['success'=>true,'items'=>$items,'count'=>count($items)]);
 }
 
+// if ($action === 'lookup_product') {
+//     $rid = getInt($_REQUEST,'rid',0);
+//     $article = getStr($_REQUEST,'article','');
+//     $vendorFilter = getInt($_REQUEST,'vendor_id',0);
+
+//     // by id
+//     if ($rid > 0) {
+//         /** @var msProduct $p */
+//         $p = $modx->getObject('msProduct', $rid);
+//         if (!$p) json_ok(['success'=>true,'items'=>[]]);
+
+//         $vendorId = (int)$p->get('vendor');
+//         // $vendorName = '';
+//         // if ($vendorId > 0) {
+//         //     $v = $modx->getObject('msVendor', $vendorId);
+//         //     $vendorName = $v ? (string)$v->get('name') : '';
+//         // }
+//         $vendorName = ms2_vendor_name($modx, $vendorId);
+
+//         json_ok(['success'=>true,'items'=>[[
+//             'id'=>(int)$p->get('id'),
+//             'pagetitle'=>(string)$p->get('pagetitle'),
+//             'article'=>(string)$p->get('article'),
+//             'vendor_id'=>$vendorId,
+//             'vendor_name'=>$vendorName,
+//         ]]]);
+//     }
+
+//     // by article (+ optional vendor filter)
+//     if ($article !== '') {
+//         $q = $modx->newQuery('msProduct');
+//         $q->select(['id','pagetitle','article','vendor']);
+//         $w = ['article' => $article];
+//         if ($vendorFilter > 0) $w['vendor'] = $vendorFilter;
+//         $q->where($w);
+//         $q->limit(50);
+
+//         $items = [];
+//         if ($q->prepare() && $q->stmt->execute()) {
+//             while ($r = $q->stmt->fetch(PDO::FETCH_ASSOC)) {
+//                 $vendorId = (int)$r['vendor'];
+//                 $vendorName = '';
+//                 if ($vendorId > 0) {
+//                     $v = $modx->getObject('msVendor', $vendorId);
+//                     $vendorName = $v ? (string)$v->get('name') : '';
+//                 }
+//                 $items[] = [
+//                     'id'=>(int)$r['id'],
+//                     'pagetitle'=>(string)$r['pagetitle'],
+//                     'article'=>(string)$r['article'],
+//                     'vendor_id'=>$vendorId,
+//                     'vendor_name'=>$vendorName,
+//                 ];
+//             }
+//         }
+
+//         json_ok(['success'=>true,'items'=>$items]);
+//     }
+
+//     json_ok(['success'=>false,'message'=>'Specify rid or article','items'=>[]]);
+// }
+
 if ($action === 'lookup_product') {
     $rid = getInt($_REQUEST,'rid',0);
     $article = getStr($_REQUEST,'article','');
     $vendorFilter = getInt($_REQUEST,'vendor_id',0);
 
+    $pfx = (string)$modx->getOption('table_prefix', null, '');
+    $tp  = $pfx . 'ms2_products';
+    $tv  = $pfx . 'ms2_vendors';
+
     // by id
     if ($rid > 0) {
-        /** @var msProduct $p */
-        $p = $modx->getObject('msProduct', $rid);
-        if (!$p) json_ok(['success'=>true,'items'=>[]]);
+        $sql = "SELECT p.id, p.pagetitle, p.article, p.vendor AS vendor_id, v.name AS vendor_name
+                FROM `{$tp}` p
+                LEFT JOIN `{$tv}` v ON v.id = p.vendor
+                WHERE p.id = :id
+                LIMIT 1";
+        $st = $modx->prepare($sql);
+        $st->bindValue(':id', $rid, PDO::PARAM_INT);
 
-        $vendorId = (int)$p->get('vendor');
-        // $vendorName = '';
-        // if ($vendorId > 0) {
-        //     $v = $modx->getObject('msVendor', $vendorId);
-        //     $vendorName = $v ? (string)$v->get('name') : '';
-        // }
-        $vendorName = ms2_vendor_name($modx, $vendorId);
+        if (!$st || !$st->execute()) {
+            json_ok(['success'=>false,'message'=>'lookup by id failed','errorInfo'=>$st ? $st->errorInfo() : null]);
+        }
 
-        json_ok(['success'=>true,'items'=>[[
-            'id'=>(int)$p->get('id'),
-            'pagetitle'=>(string)$p->get('pagetitle'),
-            'article'=>(string)$p->get('article'),
-            'vendor_id'=>$vendorId,
-            'vendor_name'=>$vendorName,
-        ]]]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+        $items = [];
+        if ($r) {
+            $items[] = [
+                'id' => (int)$r['id'],
+                'pagetitle' => (string)$r['pagetitle'],
+                'article' => (string)$r['article'],
+                'vendor_id' => (int)$r['vendor_id'],
+                'vendor_name' => (string)($r['vendor_name'] ?? ''),
+            ];
+        }
+        json_ok(['success'=>true,'items'=>$items]);
     }
 
-    // by article (+ optional vendor filter)
+    // by article (+ optional vendor)
     if ($article !== '') {
-        $q = $modx->newQuery('msProduct');
-        $q->select(['id','pagetitle','article','vendor']);
-        $w = ['article' => $article];
-        if ($vendorFilter > 0) $w['vendor'] = $vendorFilter;
-        $q->where($w);
-        $q->limit(50);
+        $sql = "SELECT p.id, p.pagetitle, p.article, p.vendor AS vendor_id, v.name AS vendor_name
+                FROM `{$tp}` p
+                LEFT JOIN `{$tv}` v ON v.id = p.vendor
+                WHERE p.article = :a";
+        if ($vendorFilter > 0) $sql .= " AND p.vendor = :vid";
+        $sql .= " ORDER BY p.id ASC LIMIT 50";
+
+        $st = $modx->prepare($sql);
+        $st->bindValue(':a', $article);
+        if ($vendorFilter > 0) $st->bindValue(':vid', $vendorFilter, PDO::PARAM_INT);
+
+        if (!$st || !$st->execute()) {
+            json_ok(['success'=>false,'message'=>'lookup by article failed','errorInfo'=>$st ? $st->errorInfo() : null]);
+        }
 
         $items = [];
-        if ($q->prepare() && $q->stmt->execute()) {
-            while ($r = $q->stmt->fetch(PDO::FETCH_ASSOC)) {
-                $vendorId = (int)$r['vendor'];
-                $vendorName = '';
-                if ($vendorId > 0) {
-                    $v = $modx->getObject('msVendor', $vendorId);
-                    $vendorName = $v ? (string)$v->get('name') : '';
-                }
-                $items[] = [
-                    'id'=>(int)$r['id'],
-                    'pagetitle'=>(string)$r['pagetitle'],
-                    'article'=>(string)$r['article'],
-                    'vendor_id'=>$vendorId,
-                    'vendor_name'=>$vendorName,
-                ];
-            }
+        while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
+            $items[] = [
+                'id' => (int)$r['id'],
+                'pagetitle' => (string)$r['pagetitle'],
+                'article' => (string)$r['article'],
+                'vendor_id' => (int)$r['vendor_id'],
+                'vendor_name' => (string)($r['vendor_name'] ?? ''),
+            ];
         }
 
         json_ok(['success'=>true,'items'=>$items]);
@@ -306,17 +377,19 @@ if ($action === 'search_all') {
     $article = getStr($_REQUEST,'article','');
     $vendorId = getInt($_REQUEST,'vendor_id',0);
 
-    // resolve resourceId by article if needed
     if ($resourceId <= 0 && $article !== '') {
-        $q = $modx->newQuery('msProduct');
-        $q->select(['id']);
-        $w = ['article' => $article];
-        if ($vendorId > 0) $w['vendor'] = $vendorId;
-        $q->where($w);
-        $q->sortby('id','ASC');
-        $q->limit(1);
-        if ($q->prepare() && $q->stmt->execute()) {
-            $rid = (int)$q->stmt->fetchColumn();
+        $pfx = (string)$modx->getOption('table_prefix', null, '');
+        $tp  = $pfx . 'ms2_products';
+
+        $sql = "SELECT id FROM `{$tp}` WHERE article = :a";
+        if ($vendorId > 0) $sql .= " AND vendor = :vid";
+        $sql .= " ORDER BY id ASC LIMIT 1";
+
+        $st = $modx->prepare($sql);
+        $st->bindValue(':a', $article);
+        if ($vendorId > 0) $st->bindValue(':vid', $vendorId, PDO::PARAM_INT);
+        if ($st && $st->execute()) {
+            $rid = (int)$st->fetchColumn();
             if ($rid > 0) $resourceId = $rid;
         }
     }
