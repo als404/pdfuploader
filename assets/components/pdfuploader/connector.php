@@ -511,7 +511,6 @@ if ($action === 'search_all') {
     // далее — ваш поиск по article (exact/like) как был:
     $like = '%' . $query . '%';
     $sql = "... WHERE (d.article = :exact OR d.article LIKE :like) ...";
-    ... получите $itemsByArticle ...
 
     // объединяем без дублей:
     $map = [];
