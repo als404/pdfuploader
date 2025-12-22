@@ -101,10 +101,23 @@ $useRegistry   = (int)$modx->getOption('pdfuploader.use_registry', null, 1);
 function abs_path(modX $modx, string $path): string {
     $path = trim($path);
     if ($path === '') return '';
+
+    // уже абсолютный
     if ($path[0] === '/') return rtrim($path, '/') . '/';
+
     $basePath = rtrim((string)$modx->getOption('base_path'), '/') . '/';
-    return rtrim($basePath, '/') . '/' . ltrim($path, '/');
+
+    // если путь "как абсолютный, но без ведущего слеша"
+    // и уже содержит base_path, просто добавляем "/"
+    $baseNoSlash = ltrim($basePath, '/');
+    if (strpos($path, $baseNoSlash) === 0) {
+        return '/' . rtrim($path, '/') . '/';
+    }
+
+    // обычный относительный
+    return rtrim($basePath, '/') . '/' . ltrim($path, '/') . '/';
 }
+
 $docsBasePath   = abs_path($modx, $docsBasePath);
 $thumbsBasePath = abs_path($modx, $thumbsBasePath);
 
@@ -456,6 +469,7 @@ if ($action === 'list_files') {
  * optional vendor_id filter
  */
 if ($action === 'search_all') {
+// search_all
     $query    = trim(getStr($_REQUEST,'query',''));
     $vendorId = (int)($_REQUEST['vendor_id'] ?? 0);
 
@@ -466,11 +480,16 @@ if ($action === 'search_all') {
     $tData    = ms2_table($modx, 'product_data');
     $tVendors = ms2_table($modx, 'vendors');
 
+    $itemsById = [];
+    $itemsByArticle = [];
+
+    // 1) Если похоже на ID (цифры) - пробуем resource_id, но НЕ выходим
     if (ctype_digit($query)) {
         $rid = (int)$query;
+
         $sql = "SELECT c.id, c.pagetitle,
-                       d.article,
-                       v.id AS vendor_id, v.name AS vendor_name
+                    d.article,
+                    v.id AS vendor_id, v.name AS vendor_name
                 FROM `{$tContent}` c
                 LEFT JOIN `{$tProd}` p ON p.id = c.id
                 LEFT JOIN `{$tData}` d ON d.id = c.id
@@ -479,22 +498,27 @@ if ($action === 'search_all') {
                 LIMIT 50";
         $stmt = $modx->prepare($sql);
         $stmt->bindValue(':id', $rid, PDO::PARAM_INT);
+
         if (!$stmt->execute()) json_error('DB error in search_all (resource_id)', ['sql'=>$sql,'error'=>$stmt->errorInfo()]);
-        json_ok(['success'=>true,'items'=>$stmt->fetchAll(PDO::FETCH_ASSOC) ?: []]);
+        $itemsById = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
 
+    // 2) Поиск по артикулу - всегда (и для цифровых тоже)
     $like = '%' . $query . '%';
+
     $sql = "SELECT c.id, c.pagetitle,
-                   d.article,
-                   v.id AS vendor_id, v.name AS vendor_name
+                d.article,
+                v.id AS vendor_id, v.name AS vendor_name
             FROM `{$tContent}` c
             INNER JOIN `{$tProd}` p ON p.id = c.id
             LEFT JOIN `{$tData}` d ON d.id = c.id
             LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
             WHERE (d.article = :exact OR d.article LIKE :like)";
+
     if ($vendorId > 0) $sql .= " AND p.vendor = :vendor_id ";
+
     $sql .= " ORDER BY (d.article = :exact) DESC, d.article ASC, c.id DESC
-              LIMIT 50";
+            LIMIT 50";
 
     $stmt = $modx->prepare($sql);
     $stmt->bindValue(':exact', $query, PDO::PARAM_STR);
@@ -502,7 +526,42 @@ if ($action === 'search_all') {
     if ($vendorId > 0) $stmt->bindValue(':vendor_id', $vendorId, PDO::PARAM_INT);
 
     if (!$stmt->execute()) json_error('DB error in search_all (article)', ['sql'=>$sql,'error'=>$stmt->errorInfo()]);
-    json_ok(['success'=>true,'items'=>$stmt->fetchAll(PDO::FETCH_ASSOC) ?: []]);
+    $itemsByArticle = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+    // 3) Объединяем без дублей по resource id
+    $map = [];
+    foreach ($itemsById as $r)      { $map[(int)$r['id']] = $r; }
+    foreach ($itemsByArticle as $r) { $map[(int)$r['id']] = $r; }
+
+    $items = array_values($map);
+
+    json_ok(['success'=>true,'items'=>$items]);
+
+}
+
+if ($action === 'list_folders') {
+    $base = rtrim($docsBasePath, '/') . '/';
+    if (!is_dir($base)) {
+        json_ok(['success'=>true,'folders'=>[], 'diagnostics'=>['base_not_dir='.$base]]);
+    }
+
+    $list = @scandir($base);
+    if ($list === false) {
+        json_ok(['success'=>true,'folders'=>[], 'diagnostics'=>['scandir_failed='.$base]]);
+    }
+
+    $folders = [];
+    foreach ($list as $x) {
+        if ($x === '.' || $x === '..') continue;
+        $p = $base . $x;
+        if (!is_dir($p)) continue;
+        // исключаем служебное
+        if ($x[0] === '.') continue;
+        $folders[] = $x;
+    }
+
+    sort($folders, SORT_NATURAL | SORT_FLAG_CASE);
+    json_ok(['success'=>true,'folders'=>$folders]);
 }
 
 /**
