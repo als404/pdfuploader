@@ -307,7 +307,10 @@ function migx_get_items(modX $modx, int $resourceId, string $tvName): array {
     if (!is_array($data)) return [];
 
     // MIGX sometimes stores object with "fieldValue"/etc; we only handle array-of-rows
-    return array_values(array_filter($data, fn($x) => is_array($x)));
+    return array_values(array_filter($data, function($x) {
+        return is_array($x);
+    }));
+
 }
 
 /** save MIGX rows */
@@ -456,7 +459,10 @@ if ($action === 'list_files') {
         ];
     }
 
-    usort($files, fn($a,$b)=>strnatcasecmp($a['name'],$b['name']));
+    usort($files, function($a, $b) {
+        return strnatcasecmp($a['name'], $b['name']);
+    });
+
     $diag[] = 'scandir_count='.count($list);
 
     json_ok(['success'=>true,'files'=>$files,'diagnostics'=>$diag]);
@@ -480,50 +486,40 @@ if ($action === 'search_all') {
     $tData    = ms2_table($modx, 'product_data');
     $tVendors = ms2_table($modx, 'vendors');
 
+    // 1) Если похоже на ID (цифры) - пробуем resource_id, но НЕ выходим
     $itemsById = [];
     $itemsByArticle = [];
 
-    // 1) Если похоже на ID (цифры) - пробуем resource_id, но НЕ выходим
-    $itemsById = [];
-
     if (ctype_digit($query)) {
         $rid = (int)$query;
-
-        $sql = "
-            SELECT c.id, c.pagetitle,
-                d.article,
-                v.id AS vendor_id, v.name AS vendor_name
-            FROM `{$tContent}` c
-            LEFT JOIN `{$tProd}` p ON p.id = c.id
-            LEFT JOIN `{$tData}` d ON d.id = c.id
-            LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
-            WHERE c.id = :id
-            LIMIT 50
-        ";
-
+        $sql = "SELECT c.id, c.pagetitle, d.article,
+                    v.id AS vendor_id, v.name AS vendor_name
+                FROM `{$tContent}` c
+                LEFT JOIN `{$tProd}` p ON p.id = c.id
+                LEFT JOIN `{$tData}` d ON d.id = c.id
+                LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
+                WHERE c.id = :id
+                LIMIT 50";
         $stmt = $modx->prepare($sql);
         $stmt->bindValue(':id', $rid, PDO::PARAM_INT);
-
         if (!$stmt->execute()) {
-            json_error('DB error in search_all (resource_id)', [
-                'sql' => $sql,
-                'error' => $stmt->errorInfo(),
-            ]);
+            json_error('DB error in search_all (resource_id)', ['sql'=>$sql,'error'=>$stmt->errorInfo()]);
         }
-
         $itemsById = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        // НЕ json_ok() здесь
     }
 
-    // дальше выполняете article-поиск как у вас, получаете $itemsByArticle
-    // затем объединяете без дублей по id
-    $itemsByArticle = ...;
+    // далее — ваш поиск по article (exact/like) как был:
+    $like = '%' . $query . '%';
+    $sql = "... WHERE (d.article = :exact OR d.article LIKE :like) ...";
+    ... получите $itemsByArticle ...
 
+    // объединяем без дублей:
     $map = [];
-    foreach ($itemsById as $r)      { $map[(int)$r['id']] = $r; }
+    foreach ($itemsById as $r) { $map[(int)$r['id']] = $r; }
     foreach ($itemsByArticle as $r) { $map[(int)$r['id']] = $r; }
 
     json_ok(['success'=>true,'items'=>array_values($map)]);
+
 
 
     // 2) Поиск по артикулу - всегда (и для цифровых тоже)
