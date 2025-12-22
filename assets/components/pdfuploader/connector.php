@@ -484,24 +484,47 @@ if ($action === 'search_all') {
     $itemsByArticle = [];
 
     // 1) Если похоже на ID (цифры) - пробуем resource_id, но НЕ выходим
+    $itemsById = [];
+
     if (ctype_digit($query)) {
         $rid = (int)$query;
 
-        $sql = "SELECT c.id, c.pagetitle,
-                    d.article,
-                    v.id AS vendor_id, v.name AS vendor_name
-                FROM `{$tContent}` c
-                LEFT JOIN `{$tProd}` p ON p.id = c.id
-                LEFT JOIN `{$tData}` d ON d.id = c.id
-                LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
-                WHERE c.id = :id
-                LIMIT 50";
+        $sql = "
+            SELECT c.id, c.pagetitle,
+                d.article,
+                v.id AS vendor_id, v.name AS vendor_name
+            FROM `{$tContent}` c
+            LEFT JOIN `{$tProd}` p ON p.id = c.id
+            LEFT JOIN `{$tData}` d ON d.id = c.id
+            LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
+            WHERE c.id = :id
+            LIMIT 50
+        ";
+
         $stmt = $modx->prepare($sql);
         $stmt->bindValue(':id', $rid, PDO::PARAM_INT);
 
-        if (!$stmt->execute()) json_error('DB error in search_all (resource_id)', ['sql'=>$sql,'error'=>$stmt->errorInfo()]);
+        if (!$stmt->execute()) {
+            json_error('DB error in search_all (resource_id)', [
+                'sql' => $sql,
+                'error' => $stmt->errorInfo(),
+            ]);
+        }
+
         $itemsById = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        // НЕ json_ok() здесь
     }
+
+    // дальше выполняете article-поиск как у вас, получаете $itemsByArticle
+    // затем объединяете без дублей по id
+    $itemsByArticle = ...;
+
+    $map = [];
+    foreach ($itemsById as $r)      { $map[(int)$r['id']] = $r; }
+    foreach ($itemsByArticle as $r) { $map[(int)$r['id']] = $r; }
+
+    json_ok(['success'=>true,'items'=>array_values($map)]);
+
 
     // 2) Поиск по артикулу - всегда (и для цифровых тоже)
     $like = '%' . $query . '%';
@@ -563,6 +586,53 @@ if ($action === 'list_folders') {
     sort($folders, SORT_NATURAL | SORT_FLAG_CASE);
     json_ok(['success'=>true,'folders'=>$folders]);
 }
+
+if ($action === 'lookup_product') {
+    $article  = trim((string)($_REQUEST['article'] ?? ''));
+    $vendorId = (int)($_REQUEST['vendor_id'] ?? 0);
+
+    if ($article === '') {
+        json_ok(['success'=>true,'items'=>[]]);
+    }
+
+    $tp = (string)$modx->getOption('table_prefix', null, 'modx_');
+    $tContent = $tp . 'site_content';
+    $tProd    = ms2_table($modx, 'products');
+    $tData    = ms2_table($modx, 'product_data');
+    $tVendors = ms2_table($modx, 'vendors');
+
+    $sql = "
+        SELECT c.id, c.pagetitle,
+               d.article,
+               v.id AS vendor_id, v.name AS vendor_name
+        FROM `{$tContent}` c
+        INNER JOIN `{$tProd}` p ON p.id = c.id
+        LEFT JOIN `{$tData}` d ON d.id = c.id
+        LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
+        WHERE d.article = :article
+    ";
+
+    if ($vendorId > 0) {
+        $sql .= " AND p.vendor = :vendor_id ";
+    }
+
+    $sql .= " LIMIT 50 ";
+
+    $stmt = $modx->prepare($sql);
+    $stmt->bindValue(':article', $article, PDO::PARAM_STR);
+    if ($vendorId > 0) $stmt->bindValue(':vendor_id', $vendorId, PDO::PARAM_INT);
+
+    if (!$stmt->execute()) {
+        json_error('DB error in lookup_product', [
+            'sql' => $sql,
+            'error' => $stmt->errorInfo(),
+        ]);
+    }
+
+    $items = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    json_ok(['success'=>true,'items'=>$items]);
+}
+
 
 /**
  * upload_pdf (single)
