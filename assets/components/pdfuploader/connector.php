@@ -1,917 +1,651 @@
 <?php
-declare(strict_types=1);
-
 /**
- * pdfuploader connector (clean + complete)
- * - No hardcoded paths; only system settings
- * - One JSON/error layer
- * - miniShop2: SQL only (no xPDO msVendor)
- * - MIGX TV: read/modify safely
- */
+ * pdfuploader connector (legacy working contract, paths from system settings only)
+ * - search_all: returns {from_registry:[], from_migx:[]}
+ * - file_usage: returns {registry:[], migx:[]}
+ * - delete_migx_item: legacy params resource_id + file (+image)
+ */ 
 
-define('MODX_API_MODE', true);
+if (!defined('MODX_API_MODE')) { define('MODX_API_MODE', true); }
 
-require_once dirname(__DIR__, 3) . '/config.core.php';
+header('Content-Type: application/json; charset=utf-8');
+
+// --- JSON-safe fatal handlers (so 500 isn't "silent") ---
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+
+set_exception_handler(function($e){
+    http_response_code(500);
+    echo json_encode(['success'=>false,'message'=>$e->getMessage()], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    exit;
+});
+set_error_handler(function($severity,$message,$file,$line){
+    if (!(error_reporting() & $severity)) return false;
+    http_response_code(500);
+    echo json_encode(['success'=>false,'message'=>"$message at $file:$line"], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    exit;
+});
+
+// --- Find MODX config.core.php robustly (no hardcoded dirname depth) ---
+$dir = __DIR__;
+$config = '';
+for ($i=0; $i<10; $i++) {
+    $try = $dir . '/config.core.php';
+    if (is_file($try)) { $config = $try; break; }
+    $dir = dirname($dir);
+}
+if (!$config) {
+    http_response_code(500);
+    echo json_encode(['success'=>false,'message'=>'config.core.php not found (search up to 10 levels)'], JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+require_once $config;
+require_once MODX_CORE_PATH . 'config/' . MODX_CONFIG_KEY . '.inc.php';
 require_once MODX_CORE_PATH . 'model/modx/modx.class.php';
 
-/** @var modX $modx */
 $modx = new modX();
 $modx->initialize('mgr');
 
-/* ----------------------------- JSON helpers ----------------------------- */
+// $miniShop2 = $modx->getService(
+//     'minishop2',
+//     'miniShop2',
+//     MODX_CORE_PATH . 'components/minishop2/model/minishop2/'
+// );
 
-function json_ok(array $data = []): void {
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-}
-function json_error(string $message, array $extra = [], int $httpCode = 200): void {
-    http_response_code($httpCode);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode(array_merge([
-        'success' => false,
-        'message' => $message,
-    ], $extra), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-}
+// if (!$miniShop2) {
+//     json_ok([
+//         'success' => false,
+//         'message' => 'miniShop2 service not loaded',
+//         'path' => MODX_CORE_PATH . 'components/minishop2/model/minishop2/'
+//     ]);
+// }
 
-set_exception_handler(function(Throwable $e) use ($modx) {
-    if ($modx) {
-        $modx->log(modX::LOG_LEVEL_ERROR, '[pdfuploader] EXCEPTION: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine());
+// ---- Force-load miniShop2 model + xPDO meta (reliable) ----
+$msModelPath = MODX_CORE_PATH . 'components/minishop2/model/';
+
+// 1) register package in xPDO (meta map + table names)
+$modx->addPackage('minishop2', $msModelPath, $modx->getOption('table_prefix'));
+
+// 2) ensure PHP class file is loaded (only once; no metadata override)
+if (!class_exists('msVendor', false)) {
+    $cls = $msModelPath . 'minishop2/msvendor.class.php';
+    if (!is_file($cls)) {
+        json_ok(['success'=>false,'message'=>'msvendor.class.php not found', 'path'=>$cls]);
     }
-    json_error('Server error (exception). See MODX error log.', [
-        'error' => $e->getMessage(),
-        'file'  => basename($e->getFile()),
-        'line'  => $e->getLine(),
-    ]);
-});
-register_shutdown_function(function() use ($modx) {
-    $err = error_get_last();
-    if (!$err) return;
-    if (!in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) return;
-
-    if ($modx) {
-        $modx->log(modX::LOG_LEVEL_ERROR, '[pdfuploader] FATAL: ' . $err['message'] . ' at ' . $err['file'] . ':' . $err['line']);
-    }
-
-    http_response_code(200);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode([
-        'success' => false,
-        'message' => 'Server error (fatal). See MODX error log.',
-        'error'   => $err['message'],
-        'file'    => basename((string)$err['file']),
-        'line'    => (int)$err['line'],
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-});
-
-/* ----------------------------- Auth guard ------------------------------ */
-
-while (ob_get_level()) { @ob_end_clean(); }
-if (!$modx->user || !$modx->user->isAuthenticated('mgr')) {
-    json_error('Forbidden', [], 403);
+    require_once $cls;
 }
 
-/* ----------------------------- Settings -------------------------------- */
-
-function opt_trim(modX $modx, string $key): string {
-    return trim((string)$modx->getOption($key), " \t\n\r\0\x0B/");
+// final assert
+if (!class_exists('msVendor', false)) {
+    json_ok(['success'=>false,'message'=>'msVendor class still not loaded']);
 }
 
-$docsBasePath   = opt_trim($modx, 'pdfuploader.docs_base_path');
-$docsBaseUrl    = opt_trim($modx, 'pdfuploader.docs_base_url');
-$thumbsBasePath = opt_trim($modx, 'pdfuploader.thumbs_base_path');
-$thumbsBaseUrl  = opt_trim($modx, 'pdfuploader.thumbs_base_url');
 
-$missing = [];
-if ($docsBasePath === '')   $missing[] = 'pdfuploader.docs_base_path';
-if ($docsBaseUrl === '')    $missing[] = 'pdfuploader.docs_base_url';
-if ($thumbsBasePath === '') $missing[] = 'pdfuploader.thumbs_base_path';
-if ($thumbsBaseUrl === '')  $missing[] = 'pdfuploader.thumbs_base_url';
-if ($missing) {
-    json_error('Missing system settings: ' . implode(', ', $missing));
+// --- Helpers ---
+function json_ok(array $a){ echo json_encode($a, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
+function getStr(array $src, string $k, string $def=''): string { return isset($src[$k]) ? trim((string)$src[$k]) : $def; }
+function getInt(array $src, string $k, int $def=0): int { return isset($src[$k]) ? (int)$src[$k] : $def; }
+
+function normFolder(string $s): string {
+    $s = trim(str_replace('\\','/',$s));
+    $s = preg_replace('~[^\w\-/]+~u', '_', $s);
+    return trim($s,'/');
 }
-
-$defaultFolder = (string)$modx->getOption('pdfuploader.default_folder', null, 'manuals');
-$tvName        = (string)$modx->getOption('pdfuploader.tv_name', null, 'sertif');
-$registryTable = (string)($modx->getOption('table_prefix') ?? '') . (string)$modx->getOption('pdfuploader.registry_table', null, 'pdfuploader_registry');
-$useRegistry   = (int)$modx->getOption('pdfuploader.use_registry', null, 1);
-
-function abs_path(modX $modx, string $path): string {
-    $path = trim($path);
-    if ($path === '') return '';
-
-    // уже абсолютный
-    if ($path[0] === '/') return rtrim($path, '/') . '/';
-
-    $basePath = rtrim((string)$modx->getOption('base_path'), '/') . '/';
-
-    // если путь "как абсолютный, но без ведущего слеша"
-    // и уже содержит base_path, просто добавляем "/"
-    $baseNoSlash = ltrim($basePath, '/');
-    if (strpos($path, $baseNoSlash) === 0) {
-        return '/' . rtrim($path, '/') . '/';
-    }
-
-    // обычный относительный
-    return rtrim($basePath, '/') . '/' . ltrim($path, '/') . '/';
+function stripSite(string $p): string {
+    $p = trim(str_replace('\\','/',$p));
+    $p = preg_replace('~^https?://[^/]+/~i', '', $p);
+    return ltrim($p,'/');
 }
-
-$docsBasePath   = abs_path($modx, $docsBasePath);
-$thumbsBasePath = abs_path($modx, $thumbsBasePath);
-
-function abs_url(modX $modx, string $u): string {
-    $u = trim($u);
-    if ($u === '') return '';
-    if (preg_match('~^https?://~i', $u)) return rtrim($u, '/');
+function baseJoinPath(string $basePath, string $folder, string $name): string {
+    $basePath = rtrim($basePath, "/\\") . '/';
+    $folder = trim($folder,'/');
+    return $basePath . ($folder !== '' ? ($folder.'/') : '') . $name;
+}
+function baseJoinUrl(modX $modx, string $baseUrl, string $folder, string $name): string {
     $site = rtrim((string)$modx->getOption('site_url'), '/');
-    return $site . '/' . ltrim($u, '/');
-}
-$docsBaseUrl   = abs_url($modx, $docsBaseUrl);
-$thumbsBaseUrl = abs_url($modx, $thumbsBaseUrl);
-
-function join_url(string $base, string ...$parts): string {
-    $out = rtrim($base, '/');
-    foreach ($parts as $p) {
-        $p = trim($p, '/');
-        if ($p !== '') $out .= '/' . $p;
-    }
-    return $out;
-}
-
-function getStr(array $a, string $k, string $d=''): string {
-    return isset($a[$k]) ? (string)$a[$k] : $d;
-}
-
-function sanitize_folder(string $s): string {
-    $s = trim((string)$s);
-    $s = preg_replace('~\s*\(авто\)$~u', '', $s);
-    $s = preg_replace('~[^a-z0-9_\-]+~i', '', $s);
-    return $s;
-}
-
-function ensure_dir(string $path, int $mode = 0775): bool {
-    if (is_dir($path)) return true;
-    @mkdir($path, $mode, true);
-    return is_dir($path);
-}
-
-function slugify_filename(string $name, string $forceExt = ''): string {
-    $ext  = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-    $base = pathinfo($name, PATHINFO_FILENAME);
-
-    static $tr = [
-        'А'=>'A','Б'=>'B','В'=>'V','Г'=>'G','Д'=>'D','Е'=>'E','Ё'=>'E','Ж'=>'Zh','З'=>'Z','И'=>'I','Й'=>'Y','К'=>'K','Л'=>'L',
-        'М'=>'M','Н'=>'N','О'=>'O','П'=>'P','Р'=>'R','С'=>'S','Т'=>'T','У'=>'U','Ф'=>'F','Х'=>'Kh','Ц'=>'Ts','Ч'=>'Ch','Ш'=>'Sh','Щ'=>'Sch',
-        'Ъ'=>'','Ы'=>'Y','Ь'=>'','Э'=>'E','Ю'=>'Yu','Я'=>'Ya',
-        'а'=>'a','б'=>'b','в'=>'v','г'=>'g','д'=>'d','е'=>'e','ё'=>'e','ж'=>'zh','з'=>'z','и'=>'i','й'=>'y','к'=>'k','л'=>'l',
-        'м'=>'m','н'=>'n','о'=>'o','п'=>'p','р'=>'r','с'=>'s','т'=>'t','у'=>'u','ф'=>'f','х'=>'kh','ц'=>'ts','ч'=>'ch','ш'=>'sh','щ'=>'sch',
-        'ъ'=>'','ы'=>'y','ь'=>'','э'=>'e','ю'=>'yu','я'=>'ya'
-    ];
-
-    $base = strtr($base, $tr);
-    $base = preg_replace('~[^A-Za-z0-9_.-]+~', '-', $base);
-    $base = preg_replace('~-{2,}~', '-', $base);
-    $base = trim($base, '-_.');
-    $base = strtolower($base);
-    if ($base === '') $base = 'file';
-
-    $finalExt = $forceExt !== '' ? strtolower($forceExt) : $ext;
-    if ($finalExt !== '') $base .= '.' . $finalExt;
-    return $base;
-}
-
-/** Preview JPG generation: Ghostscript -> Imagick fallback */
-function makeJpgPreview(string $pdfPath, string $jpgPath, array &$diag = []): bool {
-    $W = 270; $H = 382;
-
-    $gs = trim((string)shell_exec('command -v gs 2>/dev/null'));
-    if ($gs !== '') {
-        $diag[] = 'preview:ghostscript';
-        $tmp = preg_replace('~\.jpe?g$~i', '', $jpgPath) . '_tmp.jpg';
-        @unlink($tmp);
-
-        $cmd = escapeshellcmd($gs)
-            . ' -dSAFER -dBATCH -dNOPAUSE -dFirstPage=1 -dLastPage=1'
-            . ' -sDEVICE=jpeg -dJPEGQ=90'
-            . " -g{$W}x{$H} -dPDFFitPage"
-            . ' -sOutputFile=' . escapeshellarg($tmp)
-            . ' ' . escapeshellarg($pdfPath) . ' 2>&1';
-
-        $out = trim((string)shell_exec($cmd));
-        if ($out !== '') $diag[] = 'gs_out:' . mb_substr($out, 0, 200);
-
-        if (is_file($tmp) && filesize($tmp) > 0) {
-            @unlink($jpgPath);
-            @rename($tmp, $jpgPath);
-            return is_file($jpgPath) && filesize($jpgPath) > 0;
-        }
-        $diag[] = 'ghostscript_failed';
-    } else {
-        $diag[] = 'ghostscript_not_found';
-    }
-
-    if (class_exists('Imagick')) {
-        try {
-            $diag[] = 'preview:imagick';
-            $im = new Imagick();
-            $im->setResolution(150, 150);
-            $im->readImage($pdfPath . '[0]');
-            $im->setImageFormat('jpeg');
-            $im->setImageCompressionQuality(90);
-            $im->thumbnailImage($W, $H, true);
-
-            $im->setImageBackgroundColor('white');
-            $im = $im->mergeImageLayers(Imagick::LAYERMETHOD_FLATTEN);
-
-            $ok = $im->writeImage($jpgPath);
-            $im->clear();
-            $im->destroy();
-
-            return $ok && is_file($jpgPath) && filesize($jpgPath) > 0;
-        } catch (Throwable $e) {
-            $diag[] = 'imagick_error:' . $e->getMessage();
-        }
-    }
-
-    return false;
-}
-
-/* -------------------------- miniShop2 SQL helpers ----------------------- */
-
-function tp(modX $modx): string {
-    return (string)$modx->getOption('table_prefix', null, 'modx_');
-}
-function ms2_table(modX $modx, string $name): string {
-    return tp($modx) . 'ms2_' . $name;
+    $baseUrl = trim($baseUrl,'/').'/';
+    $folder = trim($folder,'/');
+    $rel = $baseUrl . ($folder !== '' ? ($folder.'/') : '') . $name;
+    return $site . '/' . ltrim($rel,'/');
 }
 
 /**
- * Find resource IDs by article (exact match) from ms2_product_data.article
- * Returns array<int>
+ * Normalize MIGX file/image into "folder/name.ext" (relative to base_url)
+ * Accepts: full URL, "/assets/..", "folder/name.pdf", "name.pdf" (fallback -> default folder)
  */
-function ms2_find_resource_ids_by_article(modX $modx, string $article): array {
-    $article = trim($article);
-    if ($article === '') return [];
+function normalizeRel(string $value, string $defaultFolder): array {
+    $v = stripSite($value);
+    $v = trim($v,'/');
+    if ($v === '') return ['folder'=>'', 'name'=>'', 'rel'=>''];
 
-    $tData = ms2_table($modx, 'product_data');
-    $sql = "SELECT `id` FROM `{$tData}` WHERE `article` = :a LIMIT 200";
-    $stmt = $modx->prepare($sql);
-    $stmt->bindValue(':a', $article, PDO::PARAM_STR);
-    if (!$stmt->execute()) return [];
-
-    $ids = [];
-    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        $ids[] = (int)$row['id'];
+    // If it's "something/something.ext"
+    if (strpos($v,'/') !== false) {
+        $parts = explode('/',$v);
+        $name = array_pop($parts);
+        $folder = normFolder(implode('/',$parts));
+        return ['folder'=>$folder, 'name'=>$name, 'rel'=>($folder !== '' ? $folder.'/' : '').$name];
     }
-    return $ids;
+
+    // Only filename
+    $name = $v;
+    $folder = normFolder($defaultFolder);
+    return ['folder'=>$folder, 'name'=>$name, 'rel'=>($folder !== '' ? $folder.'/' : '').$name];
 }
 
 /**
- * Get vendor by resource_id: ms2_products.vendor -> ms2_vendors
+ * Read MIGX items from TV (raw JSON array)
  */
-function ms2_get_vendor_for_resource(modX $modx, int $rid): array {
-    $tProd = ms2_table($modx, 'products');
-    $tV   = ms2_table($modx, 'vendors');
-
-    $sql = "SELECT v.id AS vendor_id, v.name AS vendor_name
-            FROM `{$tProd}` p
-            LEFT JOIN `{$tV}` v ON v.id = p.vendor
-            WHERE p.id = :id LIMIT 1";
-    $stmt = $modx->prepare($sql);
-    $stmt->bindValue(':id', $rid, PDO::PARAM_INT);
-    if (!$stmt->execute()) return ['vendor_id'=>0,'vendor_name'=>''];
-
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    if (!$row) return ['vendor_id'=>0,'vendor_name'=>''];
-    return ['vendor_id'=>(int)$row['vendor_id'], 'vendor_name'=>(string)$row['vendor_name']];
-}
-
-/* -------------------------- MIGX TV helpers ---------------------------- */
-
-function tv_get(modX $modx, string $tvName): ?modTemplateVar {
-    return $modx->getObject('modTemplateVar', ['name' => $tvName]);
-}
-
-/** returns array of MIGX rows (each row array) */
-function migx_get_items(modX $modx, int $resourceId, string $tvName): array {
-    $tv = tv_get($modx, $tvName);
+function migx_get_items(modX $modx, int $rid, string $tvName): array {
+    $tv = $modx->getObject('modTemplateVar', ['name' => $tvName]);
     if (!$tv) return [];
+    $tvId = (int)$tv->get('id');
 
-    $raw = (string)$tv->getValue($resourceId);
-    $raw = trim($raw);
-    if ($raw === '') return [];
-
-    $data = json_decode($raw, true);
-    if (!is_array($data)) return [];
-
-    // MIGX sometimes stores object with "fieldValue"/etc; we only handle array-of-rows
-    return array_values(array_filter($data, function($x) {
-        return is_array($x);
-    }));
-
-}
-
-/** save MIGX rows */
-function migx_save_items(modX $modx, int $resourceId, string $tvName, array $rows): bool {
-    $tv = tv_get($modx, $tvName);
-    if (!$tv) return false;
-
-    // Normalize rows to array of arrays
-    $rows = array_values(array_filter($rows, fn($x) => is_array($x)));
-
-    $json = json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($json === false) $json = '[]';
-
-    $tv->setValue($resourceId, $json);
-    $tv->save();
-
-    // Clear cache for resource
-    $modx->cacheManager->refresh([
-        'resource' => ['contexts' => ['web','mgr']]
+    $tvr = $modx->getObject('modTemplateVarResource', [
+        'contentid' => $rid,
+        'tmplvarid' => $tvId
     ]);
-    return true;
+    if (!$tvr) return [];
+
+    $val = (string)$tvr->get('value');
+    if ($val === '') return [];
+
+    $items = json_decode($val, true);
+    return is_array($items) ? $items : [];
 }
 
-function migx_add_doc(modX $modx, int $resourceId, string $tvName, string $title, string $fileRel, string $imageRel): array {
-    $rows = migx_get_items($modx, $resourceId, $tvName);
-
-    // prevent duplicates by file
-    foreach ($rows as $r) {
-        if (isset($r['file']) && (string)$r['file'] === $fileRel) {
-            // update title/image if needed
-            $r['name']  = $title;
-            $r['image'] = $imageRel;
-            // rebuild rows
-        }
-    }
-
-    $rows[] = [
-        'name'  => $title,
-        'file'  => $fileRel,
-        'image' => $imageRel,
-    ];
-
-    migx_save_items($modx, $resourceId, $tvName, $rows);
-    return $rows;
+function ms2_vendor_name(modX $modx, int $vendorId): string {
+    if ($vendorId <= 0) return '';
+    $pfx = (string)$modx->getOption('table_prefix', null, '');
+    $tv  = $pfx . 'ms2_vendors';
+    $st = $modx->prepare("SELECT name FROM `{$tv}` WHERE id=:id LIMIT 1");
+    if (!$st) return '';
+    $st->bindValue(':id', $vendorId);
+    if (!$st->execute()) return '';
+    return (string)$st->fetchColumn();
 }
 
-function migx_remove_doc_by_file(modX $modx, int $resourceId, string $tvName, string $fileRel): bool {
-    $rows = migx_get_items($modx, $resourceId, $tvName);
-    $before = count($rows);
 
-    $rows = array_values(array_filter($rows, function($r) use ($fileRel) {
-        $f = isset($r['file']) ? (string)$r['file'] : '';
-        return $f !== $fileRel;
-    }));
+// --- Options / Settings (NO hardcoded paths) ---
+$registryTable = (string)$modx->getOption('pdfuploader.registry_table', null, 'pdfuploader_registry');
+$defaultTvName = (string)$modx->getOption('pdfuploader.tv_name', null, 'sertif');
+$defaultFolder = (string)$modx->getOption('pdfuploader.default_folder', null, 'manuals');
 
-    if (count($rows) === $before) return false;
-    return migx_save_items($modx, $resourceId, $tvName, $rows);
+$docsBasePath   = rtrim((string)$modx->getOption('pdfuploader.docs_base_path', null, ''), "/\\");
+$docsBaseUrl    = trim((string)$modx->getOption('pdfuploader.docs_base_url',  null, ''), "/");
+
+$thumbsBasePath = rtrim((string)$modx->getOption('pdfuploader.thumbs_base_path', null, ''), "/\\");
+$thumbsBaseUrl  = trim((string)$modx->getOption('pdfuploader.thumbs_base_url',  null, ''), "/");
+
+// Hard requirement: settings must exist
+if ($docsBasePath === '' || $docsBaseUrl === '' || $thumbsBasePath === '' || $thumbsBaseUrl === '') {
+    json_ok([
+        'success'=>false,
+        'message'=>'Paths are not configured in system settings (pdfuploader.docs_base_path/docs_base_url/thumbs_base_path/thumbs_base_url)',
+        'paths'=>[
+            'docs_base_path'=>$docsBasePath,
+            'docs_base_url'=>$docsBaseUrl,
+            'thumbs_base_path'=>$thumbsBasePath,
+            'thumbs_base_url'=>$thumbsBaseUrl,
+        ]
+    ]);
 }
 
-/* -------------------------- Registry helpers --------------------------- */
+// --- miniShop2 (vendors/products) ---
+$modx->addPackage(
+    'minishop2',
+    MODX_CORE_PATH.'components/minishop2/model/',
+    $modx->getOption('table_prefix')
+);
 
-function registry_insert(modX $modx, string $registryTable, array $row): void {
-    // row keys: article, vendor_id, vendor_name, folder, pdf_name, thumb_name, pdf_url, thumb_url
-    $sql = "INSERT INTO `{$registryTable}`
-            (`article`,`vendor_id`,`vendor_name`,`folder`,`pdf_name`,`thumb_name`,`pdf_url`,`thumb_url`,`createdon`,`updatedon`)
-            VALUES
-            (:article,:vendor_id,:vendor_name,:folder,:pdf_name,:thumb_name,:pdf_url,:thumb_url,NOW(),NOW())";
-    $stmt = $modx->prepare($sql);
-    $stmt->bindValue(':article', (string)($row['article'] ?? ''), PDO::PARAM_STR);
-    $stmt->bindValue(':vendor_id', (int)($row['vendor_id'] ?? 0), PDO::PARAM_INT);
-    $stmt->bindValue(':vendor_name', (string)($row['vendor_name'] ?? ''), PDO::PARAM_STR);
-    $stmt->bindValue(':folder', (string)($row['folder'] ?? ''), PDO::PARAM_STR);
-    $stmt->bindValue(':pdf_name', (string)($row['pdf_name'] ?? ''), PDO::PARAM_STR);
-    $stmt->bindValue(':thumb_name', (string)($row['thumb_name'] ?? ''), PDO::PARAM_STR);
-    $stmt->bindValue(':pdf_url', (string)($row['pdf_url'] ?? ''), PDO::PARAM_STR);
-    $stmt->bindValue(':thumb_url', (string)($row['thumb_url'] ?? ''), PDO::PARAM_STR);
-    $stmt->execute();
-}
+$action = getStr($_REQUEST,'action','');
 
-function registry_delete(modX $modx, string $registryTable, string $folder, string $pdfName): int {
-    $sql = "DELETE FROM `{$registryTable}` WHERE `folder` = :f AND `pdf_name` = :p";
-    $stmt = $modx->prepare($sql);
-    $stmt->bindValue(':f', $folder, PDO::PARAM_STR);
-    $stmt->bindValue(':p', $pdfName, PDO::PARAM_STR);
-    $stmt->execute();
-    return (int)$stmt->rowCount();
-}
-
-/* ----------------------------- Actions --------------------------------- */
-
-$action = (string)($_REQUEST['action'] ?? '');
-
+// ping (diagnostic)
 if ($action === 'ping') {
-    json_ok(['success' => true, 'pong' => true, 'user' => (string)$modx->user->get('username')]);
+    json_ok([
+        'success'=>true,
+        'paths'=>[
+            'docs_base_path'=>$docsBasePath,
+            'docs_base_url'=>$docsBaseUrl,
+            'thumbs_base_path'=>$thumbsBasePath,
+            'thumbs_base_url'=>$thumbsBaseUrl,
+        ],
+        'tv_default'=>$defaultTvName,
+        'default_folder'=>$defaultFolder
+    ]);
 }
 
-/**
- * list_vendors (SQL)
- */
 if ($action === 'list_vendors') {
-    $tVendors = ms2_table($modx, 'vendors');
-    $sql = "SELECT `id`, `name` FROM `{$tVendors}` ORDER BY `name` ASC";
-    $stmt = $modx->prepare($sql);
-    if (!$stmt || !$stmt->execute()) {
-        json_error('DB error in list_vendors', ['sql'=>$sql,'error'=>$stmt?$stmt->errorInfo():null]);
-    }
-    $vendors = [];
-    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        $vendors[] = ['id' => (int)$row['id'], 'name' => (string)$row['name']];
-    }
-    json_ok(['success' => true, 'vendors' => $vendors]);
-}
+    $pfx = (string)$modx->getOption('table_prefix', null, '');
+    $tv  = $pfx . 'ms2_vendors';
 
-/**
- * list_files (non-recursive)
- */
-if ($action === 'list_files') {
-    $folderRaw = getStr($_REQUEST, 'folder', '');
-    $folder = sanitize_folder($folderRaw);
-
-    $diag = ['folder_raw='.$folderRaw,'folder_sanitized='.$folder];
-    if ($folder === '') json_ok(['success'=>true,'files'=>[],'diagnostics'=>$diag]);
-
-    $dir = rtrim($docsBasePath, '/') . '/' . $folder . '/';
-    $diag[] = 'abs_dir='.$dir;
-
-    if (!is_dir($dir)) json_ok(['success'=>true,'files'=>[],'diagnostics'=>array_merge($diag,['is_dir=false'])]);
-
-    $list = @scandir($dir);
-    if ($list === false) json_ok(['success'=>true,'files'=>[],'diagnostics'=>array_merge($diag,['scandir=false'])]);
-
-    $files = [];
-    foreach ($list as $f) {
-        if ($f === '.' || $f === '..') continue;
-        if (!preg_match('~\.pdf$~i', $f)) continue;
-
-        $p = $dir . $f;
-        $jpg = preg_replace('~\.pdf$~i', '.jpg', $f);
-
-        $files[] = [
-            'name'      => $f,
-            'size'      => @filesize($p) ?: 0,
-            'mtime'     => @filemtime($p) ?: 0,
-            'url'       => join_url($docsBaseUrl, $folder, $f),
-            'thumb_url' => join_url($thumbsBaseUrl, $folder, $jpg),
-        ];
+    $st = $modx->prepare("SELECT id, name FROM `{$tv}` ORDER BY name ASC");
+    if (!$st || !$st->execute()) {
+        json_ok(['success'=>false,'message'=>'vendors sql failed','errorInfo'=>$st ? $st->errorInfo() : null]);
     }
 
-    usort($files, function($a, $b) {
-        return strnatcasecmp($a['name'], $b['name']);
-    });
-
-    $diag[] = 'scandir_count='.count($list);
-
-    json_ok(['success'=>true,'files'=>$files,'diagnostics'=>$diag]);
-}
-
-/**
- * search_all:
- * - numeric query => resource_id
- * - else => article (exact or LIKE)
- * optional vendor_id filter
- */
-if ($action === 'search_all') {
-    $query    = trim((string)($_REQUEST['query'] ?? ''));
-    $vendorId = (int)($_REQUEST['vendor_id'] ?? 0);
-
-    if ($query === '') {
-        json_ok(['success' => true, 'items' => []]);
+    $items = [];
+    while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
+        $items[] = ['id'=>(int)$r['id'], 'name'=>(string)$r['name']];
     }
 
-    $tp       = (string)$modx->getOption('table_prefix', null, 'modx_');
-    $tContent = $tp . 'site_content';
-    $tProd    = $tp . 'ms2_products';
-    $tData    = $tp . 'ms2_product_data';
-    $tVendors = $tp . 'ms2_vendors';
-
-    $itemsById = [];
-    if (ctype_digit($query)) {
-        $rid = (int)$query;
-
-        $sql = "SELECT c.id, c.pagetitle,
-                       d.article,
-                       v.id AS vendor_id, v.name AS vendor_name
-                FROM `{$tContent}` c
-                LEFT JOIN `{$tProd}` p ON p.id = c.id
-                LEFT JOIN `{$tData}` d ON d.id = c.id
-                LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
-                WHERE c.id = :id
-                LIMIT 50";
-
-        $stmt = $modx->prepare($sql);
-        if (!$stmt) {
-            json_error('DB prepare failed in search_all (resource_id)', ['sql' => $sql]);
-        }
-        $stmt->bindValue(':id', $rid, PDO::PARAM_INT);
-
-        if (!$stmt->execute()) {
-            json_error('DB execute failed in search_all (resource_id)', [
-                'sql' => $sql,
-                'error' => $stmt->errorInfo(),
-            ]);
-        }
-
-        $itemsById = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    }
-
-    $sql = "SELECT c.id, c.pagetitle,
-                   d.article,
-                   v.id AS vendor_id, v.name AS vendor_name
-            FROM `{$tContent}` c
-            INNER JOIN `{$tProd}` p ON p.id = c.id
-            LEFT JOIN `{$tData}` d ON d.id = c.id
-            LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
-            WHERE (d.article = :exact OR d.article LIKE :like)";
-
-    if ($vendorId > 0) {
-        $sql .= " AND p.vendor = :vendor_id ";
-    }
-
-    $sql .= " ORDER BY (d.article = :exact) DESC, d.article ASC, c.id DESC
-              LIMIT 50";
-
-    $stmt = $modx->prepare($sql);
-    if (!$stmt) {
-        json_error('DB prepare failed in search_all (article)', ['sql' => $sql]);
-    }
-
-    $stmt->bindValue(':exact', $query, PDO::PARAM_STR);
-    $stmt->bindValue(':like',  '%' . $query . '%', PDO::PARAM_STR);
-    if ($vendorId > 0) {
-        $stmt->bindValue(':vendor_id', $vendorId, PDO::PARAM_INT);
-    }
-
-    if (!$stmt->execute()) {
-        json_error('DB execute failed in search_all (article)', [
-            'sql' => $sql,
-            'error' => $stmt->errorInfo(),
-        ]);
-    }
-
-    $itemsByArticle = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
-    $map = [];
-    foreach ($itemsById as $r) {
-        $map[(int)$r['id']] = $r;
-    }
-    foreach ($itemsByArticle as $r) {
-        $map[(int)$r['id']] = $r;
-    }
-
-    json_ok(['success' => true, 'items' => array_values($map)]);
-}
-
-
-if ($action === 'list_folders') {
-    $base = rtrim($docsBasePath, '/') . '/';
-    if (!is_dir($base)) {
-        json_ok(['success'=>true,'folders'=>[], 'diagnostics'=>['base_not_dir='.$base]]);
-    }
-
-    $list = @scandir($base);
-    if ($list === false) {
-        json_ok(['success'=>true,'folders'=>[], 'diagnostics'=>['scandir_failed='.$base]]);
-    }
-
-    $folders = [];
-    foreach ($list as $x) {
-        if ($x === '.' || $x === '..') continue;
-        $p = $base . $x;
-        if (!is_dir($p)) continue;
-        // исключаем служебное
-        if ($x[0] === '.') continue;
-        $folders[] = $x;
-    }
-
-    sort($folders, SORT_NATURAL | SORT_FLAG_CASE);
-    json_ok(['success'=>true,'folders'=>$folders]);
+    json_ok(['success'=>true,'items'=>$items,'count'=>count($items)]);
 }
 
 if ($action === 'lookup_product') {
-    $article  = trim((string)($_REQUEST['article'] ?? ''));
-    $vendorId = (int)($_REQUEST['vendor_id'] ?? 0);
+    $rid = getInt($_REQUEST,'rid',0);
+    $article = getStr($_REQUEST,'article','');
+    $vendorFilter = getInt($_REQUEST,'vendor_id',0);
 
-    if ($article === '') {
-        json_ok(['success' => true, 'items' => []]);
+    // by id
+    if ($rid > 0) {
+        /** @var msProduct $p */
+        $p = $modx->getObject('msProduct', $rid);
+        if (!$p) json_ok(['success'=>true,'items'=>[]]);
+
+        $vendorId = (int)$p->get('vendor');
+        // $vendorName = '';
+        // if ($vendorId > 0) {
+        //     $v = $modx->getObject('msVendor', $vendorId);
+        //     $vendorName = $v ? (string)$v->get('name') : '';
+        // }
+        $vendorName = ms2_vendor_name($modx, $vendorId);
+
+        json_ok(['success'=>true,'items'=>[[
+            'id'=>(int)$p->get('id'),
+            'pagetitle'=>(string)$p->get('pagetitle'),
+            'article'=>(string)$p->get('article'),
+            'vendor_id'=>$vendorId,
+            'vendor_name'=>$vendorName,
+        ]]]);
     }
 
-    // ВАЖНО: без дефолтов, без 'modx_'
-    $tp = (string)($modx->getOption('table_prefix') ?? '');
+    // by article (+ optional vendor filter)
+    if ($article !== '') {
+        $q = $modx->newQuery('msProduct');
+        $q->select(['id','pagetitle','article','vendor']);
+        $w = ['article' => $article];
+        if ($vendorFilter > 0) $w['vendor'] = $vendorFilter;
+        $q->where($w);
+        $q->limit(50);
 
-    $tContent = $tp . 'site_content';
-    $tProd    = $tp . 'ms2_products';
-    $tVendors = $tp . 'ms2_vendors';
-
-    $sql = "
-        SELECT
-            c.id,
-            c.pagetitle,
-            p.article,
-            v.id   AS vendor_id,
-            v.name AS vendor_name
-        FROM `{$tContent}` c
-        INNER JOIN `{$tProd}` p ON p.id = c.id
-        LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
-        WHERE p.article = :article
-    ";
-
-    if ($vendorId > 0) {
-        $sql .= " AND p.vendor = :vendor_id ";
-    }
-
-    $sql .= " LIMIT 50";
-
-    $stmt = $modx->prepare($sql);
-    if (!$stmt) {
-        json_error('DB prepare failed in lookup_product', ['sql' => $sql]);
-    }
-
-    $stmt->bindValue(':article', $article, PDO::PARAM_STR);
-    if ($vendorId > 0) {
-        $stmt->bindValue(':vendor_id', $vendorId, PDO::PARAM_INT);
-    }
-
-    if (!$stmt->execute()) {
-        json_error('DB error in lookup_product', [
-            'sql'   => $sql,
-            'error' => $stmt->errorInfo(),
-        ]);
-    }
-
-    json_ok([
-        'success' => true,
-        'items'   => $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [],
-    ]);
-}
-
-/**
- * upload_pdf (single)
- * params: folder, title (optional), file
- */
-if ($action === 'upload_pdf') {
-    $folder = sanitize_folder(getStr($_REQUEST,'folder',$defaultFolder));
-    if ($folder === '') $folder = sanitize_folder($defaultFolder) ?: 'docs';
-
-    if (empty($_FILES['file']) || !is_array($_FILES['file'])) json_error('No file uploaded');
-
-    $f = $_FILES['file'];
-    if (($f['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) json_error('Upload error', ['code'=>(int)$f['error']]);
-
-    $origName = (string)($f['name'] ?? 'file.pdf');
-    $safeName = slugify_filename($origName, 'pdf');
-
-    $pdfDir = rtrim($docsBasePath,'/') . '/' . $folder . '/';
-    $jpgDir = rtrim($thumbsBasePath,'/') . '/' . $folder . '/';
-    if (!ensure_dir($pdfDir) || !ensure_dir($jpgDir)) json_error('Cannot create target directories', ['pdfDir'=>$pdfDir,'jpgDir'=>$jpgDir]);
-
-    $pdfPath = $pdfDir . $safeName;
-    if (!@move_uploaded_file((string)$f['tmp_name'], $pdfPath)) json_error('Failed to save uploaded file');
-
-    $jpgName = preg_replace('~\.pdf$~i', '.jpg', $safeName);
-    $jpgPath = $jpgDir . $jpgName;
-
-    $diag = [];
-    $okPreview = makeJpgPreview($pdfPath, $jpgPath, $diag);
-
-    json_ok([
-        'success' => true,
-        'folder'  => $folder,
-        'pdf' => ['name'=>$safeName, 'url'=>join_url($docsBaseUrl,$folder,$safeName)],
-        'thumb' => ['name'=>$jpgName, 'url'=>join_url($thumbsBaseUrl,$folder,$jpgName), 'generated'=>$okPreview],
-        'diagnostics' => $diag,
-    ]);
-}
-
-/**
- * upload_pdf_mass
- * Upload ONE pdf once, generate jpg once, then attach to many products by articles.
- * params:
- * - folder (optional)
- * - title (optional)
- * - articles (string: one per line / comma / space)
- * - file (upload)
- */
-if ($action === 'upload_pdf_mass') {
-    $folder = sanitize_folder(getStr($_REQUEST,'folder',$defaultFolder));
-    if ($folder === '') $folder = sanitize_folder($defaultFolder) ?: 'docs';
-
-    $title = trim(getStr($_REQUEST,'title',''));
-    $articlesRaw = (string)($_REQUEST['articles'] ?? '');
-
-    if (empty($_FILES['file']) || !is_array($_FILES['file'])) json_error('No file uploaded');
-    $f = $_FILES['file'];
-    if (($f['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) json_error('Upload error', ['code'=>(int)$f['error']]);
-
-    // Parse articles list
-    $articlesRaw = str_replace(["\r\n","\r"], "\n", $articlesRaw);
-    $parts = preg_split('~[\n,; \t]+~u', $articlesRaw, -1, PREG_SPLIT_NO_EMPTY) ?: [];
-    $articles = [];
-    foreach ($parts as $p) {
-        $p = trim((string)$p);
-        if ($p !== '') $articles[] = $p;
-    }
-    $articles = array_values(array_unique($articles));
-    if (!$articles) json_error('No articles provided');
-
-    // Save PDF
-    $origName = (string)($f['name'] ?? 'file.pdf');
-    $safeName = slugify_filename($origName, 'pdf');
-
-    $pdfDir = rtrim($docsBasePath,'/') . '/' . $folder . '/';
-    $jpgDir = rtrim($thumbsBasePath,'/') . '/' . $folder . '/';
-    if (!ensure_dir($pdfDir) || !ensure_dir($jpgDir)) json_error('Cannot create target directories', ['pdfDir'=>$pdfDir,'jpgDir'=>$jpgDir]);
-
-    $pdfPath = $pdfDir . $safeName;
-    if (!@move_uploaded_file((string)$f['tmp_name'], $pdfPath)) json_error('Failed to save uploaded file');
-
-    // Preview
-    $jpgName = preg_replace('~\.pdf$~i', '.jpg', $safeName);
-    $jpgPath = $jpgDir . $jpgName;
-
-    $diag = [];
-    $okPreview = makeJpgPreview($pdfPath, $jpgPath, $diag);
-
-    // Relative paths for MIGX (store relative to base url paths)
-    // We store as "<folder>/<filename>" because file/image TVtype usually expects relative path
-    $fileRel  = $folder . '/' . $safeName;
-    $imageRel = $folder . '/' . $jpgName;
-
-    if ($title === '') $title = $safeName;
-
-    $report = [
-        'attached' => [],
-        'not_found_articles' => [],
-        'errors' => [],
-        'diagnostics' => $diag,
-        'pdf' => ['name'=>$safeName, 'url'=>join_url($docsBaseUrl,$folder,$safeName)],
-        'thumb' => ['name'=>$jpgName, 'url'=>join_url($thumbsBaseUrl,$folder,$jpgName), 'generated'=>$okPreview],
-    ];
-
-    foreach ($articles as $article) {
-        $ids = ms2_find_resource_ids_by_article($modx, $article);
-        if (!$ids) {
-            $report['not_found_articles'][] = $article;
-            continue;
+        $items = [];
+        if ($q->prepare() && $q->stmt->execute()) {
+            while ($r = $q->stmt->fetch(PDO::FETCH_ASSOC)) {
+                $vendorId = (int)$r['vendor'];
+                $vendorName = '';
+                if ($vendorId > 0) {
+                    $v = $modx->getObject('msVendor', $vendorId);
+                    $vendorName = $v ? (string)$v->get('name') : '';
+                }
+                $items[] = [
+                    'id'=>(int)$r['id'],
+                    'pagetitle'=>(string)$r['pagetitle'],
+                    'article'=>(string)$r['article'],
+                    'vendor_id'=>$vendorId,
+                    'vendor_name'=>$vendorName,
+                ];
+            }
         }
 
-        foreach ($ids as $rid) {
-            try {
-                migx_add_doc($modx, $rid, $tvName, $title, $fileRel, $imageRel);
-                $v = ms2_get_vendor_for_resource($modx, $rid);
+        json_ok(['success'=>true,'items'=>$items]);
+    }
 
-                if ($useRegistry) {
-                    registry_insert($modx, $registryTable, [
-                        'article' => $article,
-                        'vendor_id' => $v['vendor_id'],
-                        'vendor_name' => $v['vendor_name'],
-                        'folder' => $folder,
-                        'pdf_name' => $safeName,
-                        'thumb_name' => $jpgName,
-                        'pdf_url' => join_url($docsBaseUrl,$folder,$safeName),
-                        'thumb_url' => join_url($thumbsBaseUrl,$folder,$jpgName),
-                    ]);
+    json_ok(['success'=>false,'message'=>'Specify rid or article','items'=>[]]);
+}
+
+
+/**
+ * search_all (legacy): returns docs from registry + MIGX for given product
+ * Input: tv_name, resource_id, article, vendor_id
+ * Output: from_registry, from_migx
+ */
+if ($action === 'search_all') {
+    $tvName = getStr($_REQUEST,'tv_name',$defaultTvName);
+    $resourceId = getInt($_REQUEST,'resource_id',0);
+    $article = getStr($_REQUEST,'article','');
+    $vendorId = getInt($_REQUEST,'vendor_id',0);
+
+    // resolve resourceId by article if needed
+    if ($resourceId <= 0 && $article !== '') {
+        $q = $modx->newQuery('msProduct');
+        $q->select(['id']);
+        $w = ['article' => $article];
+        if ($vendorId > 0) $w['vendor'] = $vendorId;
+        $q->where($w);
+        $q->sortby('id','ASC');
+        $q->limit(1);
+        if ($q->prepare() && $q->stmt->execute()) {
+            $rid = (int)$q->stmt->fetchColumn();
+            if ($rid > 0) $resourceId = $rid;
+        }
+    }
+
+
+    if ($resourceId <= 0) {
+        json_ok(['success'=>true,'from_registry'=>[],'from_migx'=>[],'diagnostics'=>['no_resource_id']]);
+    }
+
+    // If article/vendor not provided, try take from msProductData
+    if ($article === '' || $vendorId <= 0) {
+        $d = $modx->getObject('msProductData', $resourceId);
+        if ($d) {
+            if ($article === '') $article = (string)$d->get('article');
+            if ($vendorId <= 0) $vendorId = (int)$d->get('vendor');
+        }
+    }
+
+    // vendor name
+    // $vendorName = '';
+    // if ($vendorId > 0) {
+    //     $v = $modx->getObject('msVendor', $vendorId);
+    //     $vendorName = $v ? (string)$v->get('name') : '';
+    // }
+    $vendorName = ms2_vendor_name($modx, $vendorId);
+
+
+    // --- Registry ---
+    $fromRegistry = [];
+    $diag = [];
+
+    $where = [];
+    $params = [];
+
+    if ($article !== '') { $where[] = "article=:a"; $params[':a'] = $article; }
+    if ($vendorId > 0)   { $where[] = "vendor_id=:v"; $params[':v'] = $vendorId; }
+
+    if ($where) {
+        $sql = "SELECT id,article,vendor_id,vendor_name,folder,pdf_name,thumb_name,pdf_url,thumb_url,createdon
+                FROM `{$registryTable}`
+                WHERE ".implode(' AND ',$where)."
+                ORDER BY createdon DESC";
+        $st = $modx->prepare($sql);
+        if ($st) {
+            foreach ($params as $k=>$v) $st->bindValue($k,$v);
+            if ($st->execute()) {
+                while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
+                    $folder = normFolder((string)($r['folder'] ?? $defaultFolder));
+                    $pdfName = (string)($r['pdf_name'] ?? '');
+                    if ($pdfName === '') {
+                        $pdfName = basename((string)($r['pdf_url'] ?? ''));
+                    }
+                    $thumbName = (string)($r['thumb_name'] ?? '');
+                    if ($thumbName === '') {
+                        $thumbName = basename((string)($r['thumb_url'] ?? ''));
+                    }
+
+                    $fromRegistry[] = [
+                        'id'=>(int)$r['id'],
+                        'article'=>(string)$r['article'],
+                        'vendor_id'=>(int)$r['vendor_id'],
+                        'vendor_name'=>(string)($r['vendor_name'] ?: $vendorName),
+                        'folder'=>$folder,
+                        'pdf_name'=>$pdfName,
+                        'thumb_name'=>$thumbName,
+                        'pdf_url'=> baseJoinUrl($modx, $docsBaseUrl, $folder, $pdfName),
+                        'thumb_url'=> ($thumbName !== '' ? baseJoinUrl($modx, $thumbsBaseUrl, $folder, $thumbName) : ''),
+                        'createdon'=>(string)$r['createdon'],
+                    ];
                 }
+            } else {
+                $diag[] = 'registry: execute failed';
+            }
+        } else {
+            $diag[] = 'registry: prepare failed';
+        }
+    } else {
+        $diag[] = 'registry: no filters (article/vendor missing)';
+    }
 
-                $report['attached'][] = [
-                    'article' => $article,
-                    'resource_id' => $rid,
-                    'vendor_id' => $v['vendor_id'],
-                    'vendor_name' => $v['vendor_name'],
-                ];
-            } catch (Throwable $e) {
-                $report['errors'][] = [
-                    'article' => $article,
-                    'resource_id' => $rid,
-                    'error' => $e->getMessage(),
+    // --- MIGX ---
+    $fromMigx = [];
+    $items = migx_get_items($modx, $resourceId, $tvName);
+
+    foreach ($items as $it) {
+        $rawFile  = (string)($it['file'] ?? '');
+        $rawImage = (string)($it['image'] ?? '');
+
+        $nf = normalizeRel($rawFile, $defaultFolder);
+        if ($nf['name'] === '') continue;
+
+        // Image may be missing or in different folder; we still resolve with thumbs base
+        $ni = $rawImage !== '' ? normalizeRel($rawImage, $nf['folder'] ?: $defaultFolder) : ['folder'=>'','name'=>'','rel'=>''];
+
+        $folder = $nf['folder'] !== '' ? $nf['folder'] : normFolder($defaultFolder);
+
+        $fromMigx[] = [
+            'resource_id'=>$resourceId,
+            'article'=>$article,
+            'vendor_id'=>$vendorId,
+            'vendor_name'=>$vendorName,
+            'folder'=>$folder,
+            'file'=>$nf['rel'],      // legacy
+            'image'=>$ni['rel'],     // legacy
+            'pdf_url'=> baseJoinUrl($modx, $docsBaseUrl, $folder, $nf['name']),
+            'thumb_url'=> ($ni['name'] !== '' ? baseJoinUrl($modx, $thumbsBaseUrl, ($ni['folder'] ?: $folder), $ni['name']) : ''),
+        ];
+    }
+
+    json_ok(['success'=>true,'from_registry'=>$fromRegistry,'from_migx'=>$fromMigx,'diagnostics'=>$diag]);
+}
+
+/**
+ * file_usage (legacy): check where folder/name used
+ * Output keys exactly: registry, migx
+ */
+if ($action === 'file_usage') {
+    $tvName = getStr($_REQUEST,'tv_name',$defaultTvName);
+    $folder = normFolder(getStr($_REQUEST,'folder',''));
+    $name   = trim(getStr($_REQUEST,'name',''));
+
+    if ($folder === '' || $name === '') {
+        json_ok(['success'=>false,'message'=>'Specify folder and name']);
+    }
+
+    $relative = ($folder !== '' ? $folder.'/' : '') . $name;
+
+    // registry
+    $registry = [];
+    $st = $modx->prepare("SELECT id,article,vendor_id,vendor_name,folder,pdf_name,thumb_name,pdf_url,thumb_url,createdon
+                          FROM `{$registryTable}`
+                          WHERE folder=:f AND pdf_name=:n
+                          ORDER BY createdon DESC");
+    if ($st) {
+        $st->bindValue(':f',$folder);
+        $st->bindValue(':n',$name);
+        if ($st->execute()) {
+            while ($r = $st->fetch(PDO::FETCH_ASSOC)) {
+                $folder2 = normFolder((string)($r['folder'] ?? $folder));
+                $pdfName = (string)($r['pdf_name'] ?? $name);
+                $thumbName = (string)($r['thumb_name'] ?? '');
+
+                $registry[] = [
+                    'id'=>(int)$r['id'],
+                    'article'=>(string)$r['article'],
+                    'vendor_id'=>(int)$r['vendor_id'],
+                    'vendor_name'=>(string)$r['vendor_name'],
+                    'folder'=>$folder2,
+                    'pdf_name'=>$pdfName,
+                    'thumb_name'=>$thumbName,
+                    'pdf_url'=> baseJoinUrl($modx, $docsBaseUrl, $folder2, $pdfName),
+                    'thumb_url'=> ($thumbName !== '' ? baseJoinUrl($modx, $thumbsBaseUrl, $folder2, $thumbName) : ''),
+                    'createdon'=>(string)$r['createdon'],
                 ];
             }
         }
     }
 
-    json_ok(['success'=>true,'report'=>$report]);
-}
-
-/**
- * file_usage
- * Find all resources where MIGX TV contains fileRel or just filename (safe fallback).
- * params: folder, name (pdf filename)
- */
-if ($action === 'file_usage') {
-    $folder = sanitize_folder(getStr($_REQUEST,'folder',''));
-    $name = trim(getStr($_REQUEST,'name',''));
-    if ($folder === '' || $name === '') json_error('Missing folder or name');
-
-    $tv = tv_get($modx, $tvName);
-    if (!$tv) json_error('TV not found', ['tv'=>$tvName]);
-
-    $tvId = (int)$tv->get('id');
-
-    $tTvRes = tp($modx) . 'site_tmplvar_contentvalues';
-    $tContent = tp($modx) . 'site_content';
-
-    $fileRel = $folder . '/' . $name;
-
-    // search by rel path first; fallback by filename
-    $sql = "SELECT tv.contentid AS resource_id, c.pagetitle, tv.value
-            FROM `{$tTvRes}` tv
-            LEFT JOIN `{$tContent}` c ON c.id = tv.contentid
-            WHERE tv.tmplvarid = :tvid
-              AND (tv.value LIKE :like1 OR tv.value LIKE :like2)
-            LIMIT 1000";
-    $stmt = $modx->prepare($sql);
-    $stmt->bindValue(':tvid', $tvId, PDO::PARAM_INT);
-    $stmt->bindValue(':like1', '%' . $fileRel . '%', PDO::PARAM_STR);
-    $stmt->bindValue(':like2', '%' . $name . '%', PDO::PARAM_STR);
-
-    if (!$stmt->execute()) json_error('DB error in file_usage', ['sql'=>$sql,'error'=>$stmt->errorInfo()]);
-
-    $usages = [];
-    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-        $usages[] = [
-            'resource_id' => (int)$row['resource_id'],
-            'pagetitle' => (string)$row['pagetitle'],
-        ];
+    // migx usage: LIKE + confirm JSON
+    $migx = [];
+    $tv = $modx->getObject('modTemplateVar', ['name'=>$tvName]);
+    if (!$tv) {
+        json_ok(['success'=>true,'registry'=>$registry,'migx'=>[],'diagnostics'=>["tv '{$tvName}' not found"]]);
     }
-
-    json_ok(['success'=>true,'usages'=>$usages,'count'=>count($usages),'file'=>$fileRel]);
-}
-
-/**
- * delete_migx_item
- * Remove file from ONE resource MIGX
- * params: resource_id, folder, name
- */
-if ($action === 'delete_migx_item') {
-    $rid = (int)($_REQUEST['resource_id'] ?? 0);
-    $folder = sanitize_folder(getStr($_REQUEST,'folder',''));
-    $name = trim(getStr($_REQUEST,'name',''));
-    if ($rid <= 0 || $folder === '' || $name === '') json_error('Missing params');
-
-    $fileRel = $folder . '/' . $name;
-    $removed = migx_remove_doc_by_file($modx, $rid, $tvName, $fileRel);
-
-    json_ok(['success'=>true,'removed'=>$removed,'resource_id'=>$rid,'file'=>$fileRel]);
-}
-
-/**
- * delete_all_usages
- * Remove file from ALL resources MIGX where present
- * params: folder, name
- */
-if ($action === 'delete_all_usages') {
-    $folder = sanitize_folder(getStr($_REQUEST,'folder',''));
-    $name = trim(getStr($_REQUEST,'name',''));
-    if ($folder === '' || $name === '') json_error('Missing folder or name');
-
-    $tv = tv_get($modx, $tvName);
-    if (!$tv) json_error('TV not found', ['tv'=>$tvName]);
     $tvId = (int)$tv->get('id');
 
-    $tTvRes = tp($modx) . 'site_tmplvar_contentvalues';
-    $fileRel = $folder . '/' . $name;
+    $q = $modx->newQuery('modTemplateVarResource');
+    $q->select(['contentid','value']);
+    $q->where([
+        'tmplvarid' => $tvId,
+        'value:LIKE' => '%' . $relative . '%'
+    ]);
 
-    $sql = "SELECT tv.contentid AS resource_id
-            FROM `{$tTvRes}` tv
-            WHERE tv.tmplvarid = :tvid AND tv.value LIKE :like
-            LIMIT 2000";
-    $stmt = $modx->prepare($sql);
-    $stmt->bindValue(':tvid', $tvId, PDO::PARAM_INT);
-    $stmt->bindValue(':like', '%' . $fileRel . '%', PDO::PARAM_STR);
+    $hits = [];
+    if ($q->prepare() && $q->stmt->execute()) {
+        while ($row = $q->stmt->fetch(PDO::FETCH_ASSOC)) {
+            $rid = (int)$row['contentid'];
+            $val = (string)$row['value'];
+            $items = json_decode($val,true);
+            if (!is_array($items)) continue;
 
-    if (!$stmt->execute()) json_error('DB error in delete_all_usages', ['sql'=>$sql,'error'=>$stmt->errorInfo()]);
-
-    $ids = [];
-    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) $ids[] = (int)$row['resource_id'];
-    $ids = array_values(array_unique($ids));
-
-    $removedFrom = [];
-    foreach ($ids as $rid) {
-        if (migx_remove_doc_by_file($modx, $rid, $tvName, $fileRel)) {
-            $removedFrom[] = $rid;
+            foreach ($items as $it) {
+                $nf = normalizeRel((string)($it['file'] ?? ''), $defaultFolder);
+                if ($nf['rel'] === $relative) {
+                    $hits[$rid] = true;
+                    break;
+                }
+            }
         }
     }
 
-    json_ok(['success'=>true,'file'=>$fileRel,'checked'=>count($ids),'removed_count'=>count($removedFrom),'removed_from'=>$removedFrom]);
+    if ($hits) {
+        $ids = array_keys($hits);
+
+        // titles
+        $titles = [];
+        $c = $modx->newQuery('modResource');
+        $c->select(['id','pagetitle']);
+        $c->where(['id:IN'=>$ids]);
+        if ($c->prepare() && $c->stmt->execute()) {
+            while ($r = $c->stmt->fetch(PDO::FETCH_ASSOC)) $titles[(int)$r['id']] = (string)$r['pagetitle'];
+        }
+
+        // product data
+        $articles = [];
+        $vendorIds = [];
+        $d = $modx->newQuery('msProductData');
+        $d->select(['id','article','vendor']);
+        $d->where(['id:IN'=>$ids]);
+        if ($d->prepare() && $d->stmt->execute()) {
+            while ($r = $d->stmt->fetch(PDO::FETCH_ASSOC)) {
+                $rid = (int)$r['id'];
+                $articles[$rid] = (string)$r['article'];
+                $vendorIds[$rid] = (int)$r['vendor'];
+            }
+        }
+
+        // vendor names
+        $vendorNames = [];
+        $vIds = array_values(array_unique(array_filter($vendorIds)));
+        if ($vIds) {
+            $v = $modx->newQuery('msVendor');
+            $v->select(['id','name']);
+            $v->where(['id:IN'=>$vIds]);
+            if ($v->prepare() && $v->stmt->execute()) {
+                while ($r = $v->stmt->fetch(PDO::FETCH_ASSOC)) $vendorNames[(int)$r['id']] = (string)$r['name'];
+            }
+        }
+
+        foreach ($ids as $rid) {
+            $vid = $vendorIds[$rid] ?? 0;
+            $migx[] = [
+                'resource_id'=>$rid,
+                'pagetitle'=>$titles[$rid] ?? '',
+                'article'=>$articles[$rid] ?? '',
+                'vendor_id'=>$vid,
+                'vendor_name'=>($vid ? ($vendorNames[$vid] ?? '') : ''),
+                'folder'=>$folder,
+                'file'=>$relative,
+                'pdf_url'=> baseJoinUrl($modx, $docsBaseUrl, $folder, $name),
+            ];
+        }
+    }
+
+    json_ok(['success'=>true,'registry'=>$registry,'migx'=>$migx,'file'=>$relative,'count'=>count($migx)+count($registry)]);
 }
 
 /**
- * delete_registry
- * Delete registry records by folder+pdf_name
- * params: folder, name
+ * delete_registry: optional file deletion via base_path settings (NO hardcode)
  */
 if ($action === 'delete_registry') {
-    if (!$useRegistry) json_ok(['success'=>true,'deleted'=>0,'note'=>'registry disabled']);
+    $id = getInt($_REQUEST,'id',0);
+    $deleteFiles = (bool)getInt($_REQUEST,'delete_files',0);
+    if ($id <= 0) json_ok(['success'=>false,'message'=>'No id']);
 
-    $folder = sanitize_folder(getStr($_REQUEST,'folder',''));
-    $name = trim(getStr($_REQUEST,'name',''));
-    if ($folder === '' || $name === '') json_error('Missing folder or name');
+    $st = $modx->prepare("SELECT * FROM `{$registryTable}` WHERE id=:id LIMIT 1");
+    $st->bindValue(':id',$id);
+    $st->execute();
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) json_ok(['success'=>false,'message'=>'Not found']);
 
-    $deleted = registry_delete($modx, $registryTable, $folder, $name);
-    json_ok(['success'=>true,'deleted'=>$deleted,'folder'=>$folder,'name'=>$name]);
+    $folder = normFolder((string)($row['folder'] ?? $defaultFolder));
+    $pdfName = (string)($row['pdf_name'] ?? '');
+    if ($pdfName === '') $pdfName = basename((string)($row['pdf_url'] ?? ''));
+    $thumbName = (string)($row['thumb_name'] ?? '');
+    if ($thumbName === '') $thumbName = basename((string)($row['thumb_url'] ?? ''));
+
+    $del = $modx->prepare("DELETE FROM `{$registryTable}` WHERE id=:id");
+    $del->bindValue(':id',$id);
+    $del->execute();
+
+    $files = ['pdf'=>false,'thumb'=>false];
+    if ($deleteFiles) {
+        $pdfAbs = baseJoinPath($docsBasePath, $folder, $pdfName);
+        $thumbAbs = ($thumbName !== '' ? baseJoinPath($thumbsBasePath, $folder, $thumbName) : '');
+        if ($pdfAbs !== '' && is_file($pdfAbs)) $files['pdf'] = @unlink($pdfAbs);
+        if ($thumbAbs !== '' && is_file($thumbAbs)) $files['thumb'] = @unlink($thumbAbs);
+    }
+
+    json_ok(['success'=>true,'deleted'=>true,'files'=>$files]);
 }
 
-json_error('Unknown action', ['action' => $action]);
+/**
+ * delete_migx_item (legacy): resource_id + file (+image)
+ */
+if ($action === 'delete_migx_item') {
+    $resourceId = getInt($_REQUEST,'resource_id',0);
+    $tvName = getStr($_REQUEST,'tv_name',$defaultTvName);
+    $fileIn = getStr($_REQUEST,'file','');
+    $imageIn = getStr($_REQUEST,'image','');
+
+    if ($resourceId <= 0 || trim($fileIn) === '') {
+        json_ok(['success'=>false,'message'=>'Specify resource_id and file']);
+    }
+
+    $tv = $modx->getObject('modTemplateVar', ['name'=>$tvName]);
+    if (!$tv) json_ok(['success'=>false,'message'=>"TV '{$tvName}' not found"]);
+
+    $tvId = (int)$tv->get('id');
+    $tvr = $modx->getObject('modTemplateVarResource', ['contentid'=>$resourceId,'tmplvarid'=>$tvId]);
+    if (!$tvr) json_ok(['success'=>true,'deleted'=>false,'message'=>'TV empty']);
+
+    $val = (string)$tvr->get('value');
+    $items = json_decode($val,true);
+    if (!is_array($items)) $items = [];
+
+    $targetFile = normalizeRel($fileIn, $defaultFolder)['rel'];
+    $targetImg  = ($imageIn !== '' ? normalizeRel($imageIn, $defaultFolder)['rel'] : '');
+
+    $before = count($items);
+    $filtered = [];
+
+    foreach ($items as $it) {
+        $f = normalizeRel((string)($it['file'] ?? ''), $defaultFolder)['rel'];
+        $img = normalizeRel((string)($it['image'] ?? ''), $defaultFolder)['rel'];
+
+        $match = ($f === $targetFile);
+        if ($match && $targetImg !== '') $match = ($img === $targetImg);
+
+        if (!$match) $filtered[] = $it;
+    }
+
+    $after = count($filtered);
+    if ($after === $before) json_ok(['success'=>true,'deleted'=>false,'message'=>'Not found']);
+
+    $tvr->set('value', json_encode($filtered, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES));
+    $tvr->save();
+
+    json_ok(['success'=>true,'deleted'=>true,'before'=>$before,'after'=>$after]);
+}
+
+json_ok(['success'=>false,'message'=>'Unknown action']);
