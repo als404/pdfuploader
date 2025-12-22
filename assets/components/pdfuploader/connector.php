@@ -596,47 +596,57 @@ if ($action === 'lookup_product') {
     $vendorId = (int)($_REQUEST['vendor_id'] ?? 0);
 
     if ($article === '') {
-        json_ok(['success'=>true,'items'=>[]]);
+        json_ok(['success' => true, 'items' => []]);
     }
 
-    $tp = (string)$modx->getOption('table_prefix', null, 'modx_');
+    // ВАЖНО: без дефолтов, без 'modx_'
+    $tp = (string)($modx->getOption('table_prefix') ?? '');
+
     $tContent = $tp . 'site_content';
-    $tProd    = ms2_table($modx, 'products');
-    $tData    = ms2_table($modx, 'product_data');
-    $tVendors = ms2_table($modx, 'vendors');
+    $tProd    = $tp . 'ms2_products';
+    $tVendors = $tp . 'ms2_vendors';
 
     $sql = "
-        SELECT c.id, c.pagetitle,
-               d.article,
-               v.id AS vendor_id, v.name AS vendor_name
+        SELECT
+            c.id,
+            c.pagetitle,
+            p.article,
+            v.id   AS vendor_id,
+            v.name AS vendor_name
         FROM `{$tContent}` c
         INNER JOIN `{$tProd}` p ON p.id = c.id
-        LEFT JOIN `{$tData}` d ON d.id = c.id
         LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
-        WHERE d.article = :article
+        WHERE p.article = :article
     ";
 
     if ($vendorId > 0) {
         $sql .= " AND p.vendor = :vendor_id ";
     }
 
-    $sql .= " LIMIT 50 ";
+    $sql .= " LIMIT 50";
 
     $stmt = $modx->prepare($sql);
+    if (!$stmt) {
+        json_error('DB prepare failed in lookup_product', ['sql' => $sql]);
+    }
+
     $stmt->bindValue(':article', $article, PDO::PARAM_STR);
-    if ($vendorId > 0) $stmt->bindValue(':vendor_id', $vendorId, PDO::PARAM_INT);
+    if ($vendorId > 0) {
+        $stmt->bindValue(':vendor_id', $vendorId, PDO::PARAM_INT);
+    }
 
     if (!$stmt->execute()) {
         json_error('DB error in lookup_product', [
-            'sql' => $sql,
+            'sql'   => $sql,
             'error' => $stmt->errorInfo(),
         ]);
     }
 
-    $items = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-    json_ok(['success'=>true,'items'=>$items]);
+    json_ok([
+        'success' => true,
+        'items'   => $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [],
+    ]);
 }
-
 
 /**
  * upload_pdf (single)
