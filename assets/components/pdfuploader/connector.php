@@ -475,87 +475,96 @@ if ($action === 'list_files') {
  * optional vendor_id filter
  */
 if ($action === 'search_all') {
-// search_all
-    $query    = trim(getStr($_REQUEST,'query',''));
+    $query    = trim((string)($_REQUEST['query'] ?? ''));
     $vendorId = (int)($_REQUEST['vendor_id'] ?? 0);
 
-    if ($query === '') json_ok(['success'=>true,'items'=>[]]);
+    if ($query === '') {
+        json_ok(['success' => true, 'items' => []]);
+    }
 
-    $tContent = tp($modx) . 'site_content';
-    $tProd    = ms2_table($modx, 'products');
-    $tData    = ms2_table($modx, 'product_data');
-    $tVendors = ms2_table($modx, 'vendors');
+    $tp       = (string)$modx->getOption('table_prefix', null, 'modx_');
+    $tContent = $tp . 'site_content';
+    $tProd    = $tp . 'ms2_products';
+    $tData    = $tp . 'ms2_product_data';
+    $tVendors = $tp . 'ms2_vendors';
 
-    // 1) Если похоже на ID (цифры) - пробуем resource_id, но НЕ выходим
     $itemsById = [];
-    $itemsByArticle = [];
-
     if (ctype_digit($query)) {
         $rid = (int)$query;
-        $sql = "SELECT c.id, c.pagetitle, d.article,
-                    v.id AS vendor_id, v.name AS vendor_name
+
+        $sql = "SELECT c.id, c.pagetitle,
+                       d.article,
+                       v.id AS vendor_id, v.name AS vendor_name
                 FROM `{$tContent}` c
                 LEFT JOIN `{$tProd}` p ON p.id = c.id
                 LEFT JOIN `{$tData}` d ON d.id = c.id
                 LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
                 WHERE c.id = :id
                 LIMIT 50";
+
         $stmt = $modx->prepare($sql);
-        $stmt->bindValue(':id', $rid, PDO::PARAM_INT);
-        if (!$stmt->execute()) {
-            json_error('DB error in search_all (resource_id)', ['sql'=>$sql,'error'=>$stmt->errorInfo()]);
+        if (!$stmt) {
+            json_error('DB prepare failed in search_all (resource_id)', ['sql' => $sql]);
         }
+        $stmt->bindValue(':id', $rid, PDO::PARAM_INT);
+
+        if (!$stmt->execute()) {
+            json_error('DB execute failed in search_all (resource_id)', [
+                'sql' => $sql,
+                'error' => $stmt->errorInfo(),
+            ]);
+        }
+
         $itemsById = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
 
-    // далее — ваш поиск по article (exact/like) как был:
-    $like = '%' . $query . '%';
-    $sql = "... WHERE (d.article = :exact OR d.article LIKE :like) ...";
-
-    // объединяем без дублей:
-    $map = [];
-    foreach ($itemsById as $r) { $map[(int)$r['id']] = $r; }
-    foreach ($itemsByArticle as $r) { $map[(int)$r['id']] = $r; }
-
-    json_ok(['success'=>true,'items'=>array_values($map)]);
-
-
-
-    // 2) Поиск по артикулу - всегда (и для цифровых тоже)
-    $like = '%' . $query . '%';
-
     $sql = "SELECT c.id, c.pagetitle,
-                d.article,
-                v.id AS vendor_id, v.name AS vendor_name
+                   d.article,
+                   v.id AS vendor_id, v.name AS vendor_name
             FROM `{$tContent}` c
             INNER JOIN `{$tProd}` p ON p.id = c.id
             LEFT JOIN `{$tData}` d ON d.id = c.id
             LEFT JOIN `{$tVendors}` v ON v.id = p.vendor
             WHERE (d.article = :exact OR d.article LIKE :like)";
 
-    if ($vendorId > 0) $sql .= " AND p.vendor = :vendor_id ";
+    if ($vendorId > 0) {
+        $sql .= " AND p.vendor = :vendor_id ";
+    }
 
     $sql .= " ORDER BY (d.article = :exact) DESC, d.article ASC, c.id DESC
-            LIMIT 50";
+              LIMIT 50";
 
     $stmt = $modx->prepare($sql);
-    $stmt->bindValue(':exact', $query, PDO::PARAM_STR);
-    $stmt->bindValue(':like',  $like,  PDO::PARAM_STR);
-    if ($vendorId > 0) $stmt->bindValue(':vendor_id', $vendorId, PDO::PARAM_INT);
+    if (!$stmt) {
+        json_error('DB prepare failed in search_all (article)', ['sql' => $sql]);
+    }
 
-    if (!$stmt->execute()) json_error('DB error in search_all (article)', ['sql'=>$sql,'error'=>$stmt->errorInfo()]);
+    $stmt->bindValue(':exact', $query, PDO::PARAM_STR);
+    $stmt->bindValue(':like',  '%' . $query . '%', PDO::PARAM_STR);
+    if ($vendorId > 0) {
+        $stmt->bindValue(':vendor_id', $vendorId, PDO::PARAM_INT);
+    }
+
+    if (!$stmt->execute()) {
+        json_error('DB execute failed in search_all (article)', [
+            'sql' => $sql,
+            'error' => $stmt->errorInfo(),
+        ]);
+    }
+
     $itemsByArticle = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-    // 3) Объединяем без дублей по resource id
     $map = [];
-    foreach ($itemsById as $r)      { $map[(int)$r['id']] = $r; }
-    foreach ($itemsByArticle as $r) { $map[(int)$r['id']] = $r; }
+    foreach ($itemsById as $r) {
+        $map[(int)$r['id']] = $r;
+    }
+    foreach ($itemsByArticle as $r) {
+        $map[(int)$r['id']] = $r;
+    }
 
-    $items = array_values($map);
-
-    json_ok(['success'=>true,'items'=>$items]);
-
+    json_ok(['success' => true, 'items' => array_values($map)]);
 }
+
 
 if ($action === 'list_folders') {
     $base = rtrim($docsBasePath, '/') . '/';
