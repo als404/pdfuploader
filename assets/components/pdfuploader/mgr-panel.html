@@ -1,284 +1,441 @@
 <!doctype html>
 <html lang="ru">
-
 <head>
   <meta charset="utf-8">
-  <title>pdfuploader</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>pdfuploader - панель</title>
   <style>
-    body {
-      font: 14px/1.4 Arial, sans-serif;
-      margin: 16px;
-    }
-
-    .row {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      align-items: flex-end;
-    }
-
-    label {
-      display: block;
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-
-    input,
-    select,
-    button {
-      font: 14px Arial;
-      padding: 6px 8px;
-    }
-
-    button {
-      cursor: pointer;
-    }
-
-    .box {
-      border: 1px solid #ddd;
-      padding: 12px;
-      border-radius: 6px;
-      margin-top: 12px;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-
-    .muted {
-      color: #777;
-    }
-
-    .small {
-      font-size: 12px;
-    }
-
-    pre {
-      background: #f7f7f7;
-      border: 1px solid #eee;
-      padding: 10px;
-      overflow: auto;
-    }
-
-    .doc {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      margin: 8px 0;
-    }
-
-    .doc img {
-      width: 54px;
-      height: 54px;
-      object-fit: cover;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-    }
-
-    .doc a {
-      word-break: break-all;
-    }
-
-    .doc .meta {
-      font-size: 12px;
-      color: #666;
-    }
+    body{font-family:Arial,Helvetica,sans-serif;margin:18px;background:#f6f7fb;color:#111}
+    .wrap{max-width:1100px;margin:0 auto}
+    h1{font-size:20px;margin:0 0 12px}
+    h2{font-size:16px;margin:18px 0 8px}
+    .card{background:#fff;border:1px solid #e6e7ee;border-radius:10px;padding:12px;margin:10px 0;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    .field{display:flex;flex-direction:column;gap:4px;min-width:180px;flex:1}
+    label{font-size:12px;color:#444}
+    input,select,textarea{padding:8px 10px;border:1px solid #d7d8e0;border-radius:8px;font-size:14px}
+    textarea{min-height:86px}
+    .btn{padding:9px 12px;border:1px solid #cfd1da;border-radius:8px;background:#f1f2f6;cursor:pointer;font-size:14px}
+    .btn.primary{background:#1f6feb;color:#fff;border-color:#1f6feb}
+    .btn.danger{background:#d1242f;color:#fff;border-color:#d1242f}
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+    .muted{color:#666;font-size:12px}
+    pre{background:#0b1020;color:#e7e9f5;padding:10px;border-radius:10px;overflow:auto;font-size:12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid #eee;padding:8px;font-size:13px;text-align:left;vertical-align:top}
+    th{background:#fafafa;font-weight:600}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef1ff;color:#2d3a8c;font-size:12px}
+    .small{font-size:12px}
+    .right{margin-left:auto}
+    .sep{height:1px;background:#eee;margin:10px 0}
   </style>
 </head>
-
 <body>
-
-  <h2>pdfuploader - панель</h2>
-
-  <div class="box">
-    <div class="row">
-      <div>
-        <label>TV name</label>
-        <input id="tv_name" value="sertif">
+<div class="wrap">
+  <h1>pdfuploader - панель</h1>
+  <div class="card">
+    <div class="row" style="align-items:flex-end">
+      <div class="field" style="min-width:320px">
+        <label>URL коннектора</label>
+        <input id="inpConnector" value="../connector.php" />
+        <div class="muted">Обычно: <span class="pill">../connector.php</span> (если файл mgr-panel.html лежит в assets/components/pdfuploader/)</div>
       </div>
-      <div>
+      <button class="btn primary" id="btnPing">Ping</button>
+      <button class="btn" id="btnReloadMeta">Обновить бренды/папки</button>
+      <span class="right muted" id="lblStatus"></span>
+    </div>
+    <div class="sep"></div>
+    <div class="row">
+      <div class="field">
+        <label>TV (по умолчанию)</label>
+        <input id="inpTv" value="sertif">
+      </div>
+      <div class="field">
+        <label>Папка (по умолчанию)</label>
+        <input id="inpDefaultFolder" value="manuals">
+      </div>
+      <div class="field">
         <label>Бренд</label>
-        <select id="vendor_id">
-          <option value="0">Все</option>
+        <select id="selVendor">
+          <option value="0">- не выбран -</option>
+        </select>
+        <div class="muted">Если бренд выбран - поиск/массовая загрузка учитывают его.</div>
+      </div>
+      <div class="field">
+        <label>Папка</label>
+        <select id="selFolder">
+          <option value="">(авто)</option>
         </select>
       </div>
-      <div>
-        <label>Артикул</label>
-        <input id="article" placeholder="например 2020016">
-      </div>
-      <div>
-        <label>ID товара</label>
-        <input id="resource_id" placeholder="например 8131">
-      </div>
-      <div>
-        <button id="btn_search">Найти документы</button>
-      </div>
     </div>
+    <details style="margin-top:10px">
+      <summary class="small">Технические детали (последний ответ)</summary>
+      <pre id="preLast">-</pre>
+    </details>
+  </div>
 
-    <hr>
-
+  <div class="card">
+    <h2>Поиск (артикул / ID) + документы</h2>
     <div class="row">
-      <div>
-        <label>file_usage - folder</label>
-        <input id="u_folder" placeholder="instructions">
+      <div class="field">
+        <label>Артикул</label>
+        <input id="inpArticle" placeholder="например 2020016">
       </div>
-      <div>
-        <label>name</label>
-        <input id="u_name" placeholder="2020016.pdf">
+      <div class="field">
+        <label>ID товара (resource_id)</label>
+        <input id="inpRid" placeholder="например 8131">
       </div>
-      <div>
-        <button id="btn_usage">Проверить</button>
-      </div>
-      <div>
-        <button id="btn_ping">ping</button>
-      </div>
-      <div class="muted small" id="status"></div>
+      <button class="btn primary" id="btnLookup" title="Поиск товара">Lookup</button>
+      <button class="btn" id="btnSearchAll" title="Поиск документов">Search all</button>
     </div>
+    <div class="sep"></div>
+    <div id="boxLookup"></div>
+    <div id="boxDocs"></div>
   </div>
 
-  <div class="grid">
-    <div class="box">
-      <h3>В реестре</h3>
-      <div id="registry_block" class="muted">совпадений нет</div>
-    </div>
-    <div class="box">
-      <h3>В карточках товаров (MIGX)</h3>
-      <div id="migx_block" class="muted">совпадений нет</div>
-    </div>
-  </div>
-
-  <div class="box">
-    <h3>file_usage</h3>
-    <div class="grid">
-      <div>
-        <div class="small muted">В реестре:</div>
-        <div id="usage_registry" class="muted">совпадений нет</div>
+  <div class="card">
+    <h2>Добавить документ (PDF)</h2>
+    <div class="row">
+      <div class="field">
+        <label>Артикул</label>
+        <input id="uArticle" placeholder="например 2020016">
       </div>
-      <div>
-        <div class="small muted">В карточках товаров (MIGX):</div>
-        <div id="usage_migx" class="muted">совпадений нет</div>
+      <div class="field">
+        <label>ID товара (resource_id, опционально)</label>
+        <input id="uRid" placeholder="например 8131">
       </div>
+      <div class="field">
+        <label>Название/Title (опционально)</label>
+        <input id="uTitle" placeholder="Инструкция / Сертификат">
+      </div>
+      <div class="field" style="min-width:260px">
+        <label>Файл PDF</label>
+        <input id="uFile" type="file" accept="application/pdf">
+      </div>
+      <button class="btn primary" id="btnUpload">Загрузить</button>
     </div>
+    <div class="muted" style="margin-top:6px">Файл сохраняется в выбранную папку, превью создаётся в thumbs (webp) при наличии Imagick.</div>
   </div>
 
-  <div class="box">
-    <h3>Технические детали</h3>
-    <div class="small muted" id="tech_time"></div>
-    <pre id="tech"></pre>
+  <div class="card">
+    <h2>Массовое добавление</h2>
+    <div class="row">
+      <div class="field" style="min-width:340px">
+        <label>Режим B: один PDF + список артикулов</label>
+        <input id="mSingleFile" type="file" accept="application/pdf">
+      </div>
+      <div class="field" style="min-width:340px;flex:2">
+        <label>Список артикулов (articles) - по одному в строке или через запятую</label>
+        <textarea id="mArticles" placeholder="2010055\n2020016\n..."></textarea>
+      </div>
+      <button class="btn primary" id="btnMassSingle">Разложить по артикулам</button>
+    </div>
+    <div class="sep"></div>
+    <div class="row">
+      <div class="field" style="min-width:340px">
+        <label>Режим A: много PDF (pdf_files[]). Артикул берётся из имени файла</label>
+        <input id="mMultiFiles" type="file" accept="application/pdf" multiple>
+      </div>
+      <button class="btn primary" id="btnMassMulti">Загрузить список файлов</button>
+    </div>
+    <details style="margin-top:10px">
+      <summary class="small">Результаты массовой загрузки</summary>
+      <pre id="preMass">-</pre>
+    </details>
   </div>
 
-  <script>
-    const CONNECTOR = 'connector.php';
-    const $ = (id) => document.getElementById(id);
+  <div class="card">
+    <h2>Удаление</h2>
+    <div class="row">
+      <div class="field">
+        <label>Файл (относительный путь, например instructions/2010055.pdf)</label>
+        <input id="dFile" placeholder="instructions/2010055.pdf">
+      </div>
+      <button class="btn" id="btnFileUsage">Проверить использование</button>
+      <button class="btn danger" id="btnBulkDelMigx">Удалить из MIGX (везде)</button>
+      <button class="btn danger" id="btnBulkDelReg">Удалить из реестра (по file)</button>
+    </div>
+    <div class="muted" style="margin-top:6px">Удаление из MIGX - по TV, указанному сверху. Удаление из реестра - по точному совпадению поля <span class="pill">file</span>.</div>
+    <details style="margin-top:10px">
+      <summary class="small">Использование файла</summary>
+      <pre id="preUsage">-</pre>
+    </details>
+  </div>
+</div>
 
-    function nowStr() {
-      const d = new Date();
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    }
-    function setTech(obj) {
-      $('tech_time').textContent = nowStr();
-      $('tech').textContent = JSON.stringify(obj, null, 2);
-    }
-    async function api(params) {
-      const q = new URLSearchParams(params);
-      const r = await fetch(CONNECTOR + '?' + q.toString(), { credentials: 'same-origin' });
-      const j = await r.json();
-      setTech(j);
-      return j;
-    }
-    function renderDocs(container, arr) {
-      if (!arr || !arr.length) {
-        container.innerHTML = '<span class="muted">совпадений нет</span>';
-        return;
+<script>
+  const $ = (id)=>document.getElementById(id);
+  const statusEl = $('lblStatus');
+  const lastEl = $('preLast');
+
+  function connectorUrl(){
+    return $('inpConnector').value.trim();
+  }
+  function setStatus(msg){ statusEl.textContent = msg || ''; }
+  function setLast(obj){ lastEl.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2); }
+
+  async function apiGet(params){
+    const url = new URL(connectorUrl(), location.href);
+    Object.entries(params||{}).forEach(([k,v])=>{
+      if (v===undefined || v===null || v==='') return;
+      url.searchParams.set(k, String(v));
+    });
+    const r = await fetch(url.toString(), {credentials:'same-origin'});
+    const t = await r.text();
+    try { return JSON.parse(t); } catch(e){ return {success:false, message:'Bad JSON', raw:t}; }
+  }
+  async function apiPost(action, formData){
+    const url = new URL(connectorUrl(), location.href);
+    url.searchParams.set('action', action);
+    const r = await fetch(url.toString(), {method:'POST', body:formData, credentials:'same-origin'});
+    const t = await r.text();
+    try { return JSON.parse(t); } catch(e){ return {success:false, message:'Bad JSON', raw:t}; }
+  }
+
+  async function ping(){
+    setStatus('ping...');
+    const j = await apiGet({action:'ping'});
+    setLast(j);
+    if (!j || j.success !== true) { setStatus('ping error'); return; }
+    if (j.tv_default) $('inpTv').value = j.tv_default;
+    if (j.default_folder) $('inpDefaultFolder').value = j.default_folder;
+    setStatus('ok');
+  }
+
+  async function loadVendors(){
+    const sel = $('selVendor');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="0">- не выбран -</option>';
+    const j = await apiGet({action:'list_vendors'});
+    setLast(j);
+    if (!j.success) return;
+    (j.items||[]).forEach(it=>{
+      const o=document.createElement('option');
+      o.value = it.id;
+      o.textContent = it.name;
+      sel.appendChild(o);
+    });
+    if ([...sel.options].some(o=>o.value===cur)) sel.value = cur;
+  }
+
+  async function loadFolders(){
+    const sel = $('selFolder');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">(авто)</option>';
+    const j = await apiGet({action:'list_folders'});
+    setLast(j);
+    if (!j.success) return;
+    (j.folders||[]).forEach(name=>{
+      const o=document.createElement('option');
+      o.value=name;
+      o.textContent=name;
+      sel.appendChild(o);
+    });
+    if ([...sel.options].some(o=>o.value===cur)) sel.value = cur;
+  }
+
+  function currentFolder(){
+    return ($('selFolder').value || $('inpDefaultFolder').value || 'manuals').trim();
+  }
+  function currentTv(){
+    return ($('inpTv').value || 'sertif').trim();
+  }
+  function currentVendor(){
+    return parseInt($('selVendor').value||'0',10) || 0;
+  }
+
+  function renderTable(items, withActions){
+    if (!items || !items.length) return '<div class="muted">Пусто</div>';
+    const rows = items.map(it=>{
+      const cols = [
+        it.id ?? '',
+        it.resource_id ?? it.id ?? '',
+        it.article ?? '',
+        it.vendor_id ?? '',
+        it.vendor_name ?? '',
+        it.folder ?? '',
+        it.file ?? '',
+        it.pdf_url ? `<a href="${it.pdf_url}" target="_blank">PDF</a>` : '',
+        it.thumb_url ? `<a href="${it.thumb_url}" target="_blank">thumb</a>` : ''
+      ];
+      let act = '';
+      if (withActions && it.resource_id && it.file){
+        act = `<button class="btn danger" data-act="del_migx" data-rid="${it.resource_id}" data-file="${it.file}">Удалить из MIGX</button>`;
       }
-      container.innerHTML = '';
-      arr.forEach((it) => {
-        const div = document.createElement('div');
-        div.className = 'doc';
+      if (withActions && it.id){
+        act += ` <button class="btn danger" data-act="del_reg" data-id="${it.id}">Удалить из реестра</button>`;
+      }
+      return `<tr>
+        <td>${cols[0]}</td><td>${cols[1]}</td><td>${cols[2]}</td><td>${cols[3]}</td><td>${cols[4]}</td>
+        <td>${cols[5]}</td><td class="small">${cols[6]}</td><td>${cols[7]}</td><td>${cols[8]}</td>
+        <td>${act}</td>
+      </tr>`;
+    }).join('');
+    return `<table>
+      <thead><tr>
+        <th>ID</th><th>resource_id</th><th>Артикул</th><th>vendor_id</th><th>vendor_name</th>
+        <th>folder</th><th>file</th><th>pdf</th><th>thumb</th><th>действия</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
 
-        const img = document.createElement('img');
-        img.alt = '';
-        img.src = it.thumb_url || '';
-        if (!img.src) img.style.display = 'none';
+  async function lookup(){
+    const article = $('inpArticle').value.trim();
+    const rid = $('inpRid').value.trim();
+    const vendor_id = currentVendor();
+    const j = await apiGet({action:'lookup_product', article, rid, vendor_id: vendor_id>0?vendor_id:''});
+    setLast(j);
+    const box = $('boxLookup');
+    if (!j.success) { box.innerHTML = `<div class="muted">Ошибка: ${j.message||''}</div>`; return; }
+    box.innerHTML = `<div class="muted">Найдено: ${j.count|| (j.items||[]).length}</div>` + renderTable(j.items||[], false);
+  }
 
-        const body = document.createElement('div');
-        const a = document.createElement('a');
-        a.href = it.pdf_url || '';
-        a.target = '_blank';
-        a.textContent = it.file || it.pdf_name || it.name || it.pdf_url || 'document';
+  async function searchAll(){
+    const article = $('inpArticle').value.trim();
+    const resource_id = $('inpRid').value.trim();
+    const vendor_id = currentVendor();
+    const folder = currentFolder();
+    const tv_name = currentTv();
 
-        const meta = document.createElement('div');
-        meta.className = 'meta';
-        meta.textContent = [
-          it.article ? `арт ${it.article}` : '',
-          it.vendor_name ? `бренд ${it.vendor_name}` : '',
-          it.folder ? `папка ${it.folder}` : '',
-          it.resource_id ? `ID ${it.resource_id}` : ''
-        ].filter(Boolean).join(' - ');
+    const j = await apiGet({action:'search_all', article, resource_id, vendor_id: vendor_id>0?vendor_id:'', folder, tv_name});
+    setLast(j);
+    const box = $('boxDocs');
+    if (!j.success) { box.innerHTML = `<div class="muted">Ошибка: ${j.message||''}</div>`; return; }
 
-        body.appendChild(a);
-        if (meta.textContent) body.appendChild(meta);
+    const a = j.from_registry || [];
+    const b = j.from_migx || [];
+    box.innerHTML = `
+      <h2>Реестр</h2>
+      ${renderTable(a, true)}
+      <h2>Карточки товаров (MIGX)</h2>
+      ${renderTable(b, true)}
+    `;
 
-        div.appendChild(img);
-        div.appendChild(body);
-        container.appendChild(div);
+    // wire delete buttons
+    box.querySelectorAll('button[data-act]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const act = btn.getAttribute('data-act');
+        if (act==='del_migx'){
+          const rid = btn.getAttribute('data-rid');
+          const file = btn.getAttribute('data-file');
+          const r = await apiGet({action:'delete_migx_item', resource_id:rid, tv_name: currentTv(), file});
+          setLast(r);
+          await searchAll();
+        } else if (act==='del_reg'){
+          const id = btn.getAttribute('data-id');
+          const r = await apiGet({action:'delete_registry', id});
+          setLast(r);
+          await searchAll();
+        }
       });
-    }
-
-    async function loadVendors() {
-      const j = await api({ action: 'list_vendors' });
-      const sel = $('vendor_id');
-      if (!j.success) return;
-      (j.items || []).forEach(v => {
-        const o = document.createElement('option');
-        o.value = v.id;
-        o.textContent = v.name;
-        sel.appendChild(o);
-      });
-    }
-
-    $('btn_ping').addEventListener('click', async () => {
-      $('status').textContent = '...';
-      const j = await api({ action: 'ping' });
-      $('status').textContent = j.success ? 'OK' : ('ERR: ' + (j.message || ''));
     });
+  }
 
-    $('btn_search').addEventListener('click', async () => {
-      $('registry_block').innerHTML = '<span class="muted">загрузка...</span>';
-      $('migx_block').innerHTML = '<span class="muted">загрузка...</span>';
+  async function uploadSingle(){
+    const fd = new FormData();
+    fd.set('folder', currentFolder());
+    fd.set('tv_name', currentTv());
+    const vendor_id = currentVendor();
+    if (vendor_id>0) fd.set('vendor_id', String(vendor_id));
+    fd.set('article', $('uArticle').value.trim());
+    fd.set('resource_id', $('uRid').value.trim());
+    fd.set('title', $('uTitle').value.trim());
+    const f = $('uFile').files[0];
+    if (!f) { alert('Выберите PDF'); return; }
+    fd.set('pdf_file', f, f.name);
+    const j = await apiPost('upload_pdf', fd);
+    setLast(j);
+    if (j.success) { alert('Загружено'); }
+  }
 
-      const tv_name = $('tv_name').value.trim() || 'sertif';
-      const vendor_id = $('vendor_id').value || '0';
-      const article = $('article').value.trim();
-      const resource_id = $('resource_id').value.trim();
+  async function massSingleToArticles(){
+    const file = $('mSingleFile').files[0];
+    const articles = $('mArticles').value.trim();
+    if (!file) { alert('Выберите PDF'); return; }
+    if (!articles) { alert('Вставьте список артикулов'); return; }
 
-      const j = await api({ action: 'search_all', tv_name, vendor_id, article, resource_id });
+    const fd = new FormData();
+    fd.set('folder', currentFolder());
+    fd.set('tv_name', currentTv());
+    const vendor_id = currentVendor();
+    if (vendor_id>0) fd.set('vendor_id', String(vendor_id));
+    fd.set('articles', articles);
+    fd.set('pdf_file', file, file.name);
 
-      renderDocs($('registry_block'), j.from_registry || []);
-      renderDocs($('migx_block'), j.from_migx || []);
-    });
+    const j = await apiPost('upload_pdf_mass', fd);
+    $('preMass').textContent = JSON.stringify(j, null, 2);
+    setLast(j);
+    if (!j.success) alert(j.message||'Ошибка');
+  }
 
-    $('btn_usage').addEventListener('click', async () => {
-      $('usage_registry').innerHTML = '<span class="muted">загрузка...</span>';
-      $('usage_migx').innerHTML = '<span class="muted">загрузка...</span>';
+  async function massMultiFiles(){
+    const files = $('mMultiFiles').files;
+    if (!files || !files.length) { alert('Выберите файлы'); return; }
 
-      const tv_name = $('tv_name').value.trim() || 'sertif';
-      const folder = $('u_folder').value.trim();
-      const name = $('u_name').value.trim();
+    const fd = new FormData();
+    fd.set('folder', currentFolder());
+    fd.set('tv_name', currentTv());
+    const vendor_id = currentVendor();
+    if (vendor_id>0) fd.set('vendor_id', String(vendor_id));
+    for (const f of files) fd.append('pdf_files[]', f, f.name);
 
-      const j = await api({ action: 'file_usage', tv_name, folder, name });
+    const j = await apiPost('upload_pdf_mass', fd);
+    $('preMass').textContent = JSON.stringify(j, null, 2);
+    setLast(j);
+    if (!j.success) alert(j.message||'Ошибка');
+  }
 
-      renderDocs($('usage_registry'), j.registry || []);
-      renderDocs($('usage_migx'), j.migx || []);
-    });
+  async function fileUsage(){
+    const file = $('dFile').value.trim();
+    if (!file) { alert('Укажите file'); return; }
+    const j = await apiGet({action:'file_usage', file, tv_name: currentTv()});
+    $('preUsage').textContent = JSON.stringify(j, null, 2);
+    setLast(j);
+  }
 
-    loadVendors();
-  </script>
+  async function bulkDelMigx(){
+    const file = $('dFile').value.trim();
+    if (!file) { alert('Укажите file'); return; }
+    if (!confirm('Удалить из MIGX на всех товарах?')) return;
+    const j = await apiGet({action:'bulk_delete_migx_by_file', file, tv_name: currentTv()});
+    $('preUsage').textContent = JSON.stringify(j, null, 2);
+    setLast(j);
+  }
 
+  async function bulkDelReg(){
+    const file = $('dFile').value.trim();
+    if (!file) { alert('Укажите file'); return; }
+    // ожидается folder/name
+    const parts = file.replace(/\\/g,'/').split('/');
+    if (parts.length < 2) { alert('Нужно folder/name.pdf'); return; }
+    const name = parts.pop();
+    const folder = parts.join('/');
+    if (!confirm(`Удалить из реестра все записи по file=${folder}/${name}?`)) return;
+    const j = await apiGet({action:'bulk_delete_registry_by_file', folder, name});
+    $('preUsage').textContent = JSON.stringify(j, null, 2);
+    setLast(j);
+  }
+
+  $('btnPing').addEventListener('click', ping);
+  $('btnReloadMeta').addEventListener('click', async()=>{ await loadVendors(); await loadFolders(); });
+  $('btnLookup').addEventListener('click', lookup);
+  $('btnSearchAll').addEventListener('click', searchAll);
+
+  $('btnUpload').addEventListener('click', uploadSingle);
+  $('btnMassSingle').addEventListener('click', massSingleToArticles);
+  $('btnMassMulti').addEventListener('click', massMultiFiles);
+
+  $('btnFileUsage').addEventListener('click', fileUsage);
+  $('btnBulkDelMigx').addEventListener('click', bulkDelMigx);
+  $('btnBulkDelReg').addEventListener('click', bulkDelReg);
+
+  // initial
+  (async()=>{
+    await ping();
+    await loadVendors();
+    await loadFolders();
+  })();
+</script>
 </body>
-
 </html>
